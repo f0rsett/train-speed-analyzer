@@ -38,7 +38,7 @@
 ### 1. Клонировать репозиторий
 
 ```bash
-git clone https://github.com/ваш-логин/smooth-train-analytics.git
+git clone https://github.com/ваш-логин/train-speed-analyzer.git
 cd smooth-train-analytics
 ```
 
