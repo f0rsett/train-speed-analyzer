@@ -33,9 +33,8 @@ class PlotManager:
         
         self.vline1 = None
         self.vline2 = None
-        # Убрали info_text1, info_text2
         
-        self.rect = None
+        self.rects = []           # список объектов axvspan (на обоих осях)
         self.press_x = None
         self.is_dragging = False
         
@@ -47,6 +46,7 @@ class PlotManager:
         
         self.status_callback = None
         self.hover_callback = None
+        self.selection_callback = None
     
     def set_data(self, df, time_col, top_columns, bottom_columns):
         self.df = df
@@ -59,6 +59,9 @@ class PlotManager:
     
     def set_hover_callback(self, callback):
         self.hover_callback = callback
+    
+    def set_selection_callback(self, callback):
+        self.selection_callback = callback
     
     def get_unit(self, column):
         return UNITS.get(column, "")
@@ -144,7 +147,6 @@ class PlotManager:
         canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
     
     def _add_interactivity(self, canvas, ax1, ax2):
-        # Только вертикальные линии (без текстовых меток)
         self.vline1 = ax1.axvline(x=0, color='#FF6B6B', linestyle='--', 
                                   linewidth=2, alpha=0.8, visible=False)
         self.vline2 = ax2.axvline(x=0, color='#FF6B6B', linestyle='--', 
@@ -181,12 +183,10 @@ class PlotManager:
             return
         time_val = time[idx]
         
-        # Собираем значения ВСЕХ числовых столбцов (кроме времени)
         data_dict = {}
         for col in self.df.columns:
             if col == self.time_col:
                 continue
-            # Проверяем, что столбец числовой
             if pd.api.types.is_numeric_dtype(self.df[col]):
                 if idx < len(self.df):
                     val = self.df[col].iloc[idx]
@@ -216,20 +216,31 @@ class PlotManager:
             return
         self.press_x = event.xdata
         self.is_dragging = True
-        if self.rect is not None:
-            self.rect.remove()
-            self.rect = None
+        # Удаляем предыдущие области
+        self._clear_rects()
+    
+    def _clear_rects(self):
+        """Удаляет все объекты выделения из списка"""
+        for rect in self.rects:
+            try:
+                rect.remove()
+            except:
+                pass
+        self.rects.clear()
+        if self.canvas:
             self.canvas.draw_idle()
     
     def on_motion(self, event):
         if not self.is_dragging or event.inaxes is None:
             return
-        if self.rect is not None:
-            self.rect.remove()
+        # Удаляем старые области перед рисованием новых
+        self._clear_rects()
         x1 = self.press_x
         x2 = event.xdata
-        self.rect = self.ax1.axvspan(x1, x2, alpha=0.3, color='yellow')
-        self.ax2.axvspan(x1, x2, alpha=0.3, color='yellow')
+        # Рисуем новые области на обоих осях
+        r1 = self.ax1.axvspan(x1, x2, alpha=0.3, color='yellow')
+        r2 = self.ax2.axvspan(x1, x2, alpha=0.3, color='yellow')
+        self.rects = [r1, r2]
         self.canvas.draw_idle()
     
     def on_release(self, event):
@@ -239,22 +250,40 @@ class PlotManager:
         x1 = min(self.press_x, event.xdata)
         x2 = max(self.press_x, event.xdata)
         
+        if abs(x2 - x1) < 1e-6:
+            return
+        
         time = self.df[self.time_col].values
         mask = (time >= x1) & (time <= x2)
+        if not mask.any():
+            return
         
-        if mask.any():
-            if self.ax1.lines:
-                first_line = self.ax1.lines[0]
-                y_selected = first_line.get_ydata()[mask]
-                mean_val = np.nanmean(y_selected)
-                if self.status_callback:
-                    self.status_callback(f"Выделена область: {x1:.2f} - {x2:.2f} с, среднее = {mean_val:.3f}")
+        stats = {}
+        for col in self.df.columns:
+            if col == self.time_col:
+                continue
+            if pd.api.types.is_numeric_dtype(self.df[col]):
+                vals = self.df[col][mask].values
+                vals = vals[~np.isnan(vals)]
+                if len(vals) > 0:
+                    stats[col] = (np.mean(vals), np.min(vals), np.max(vals), np.std(vals))
+        
+        if self.selection_callback and stats:
+            self.selection_callback(x1, x2, stats)
+        
+        if self.status_callback:
+            first_col = next(iter(stats)) if stats else None
+            if first_col:
+                mean_val = stats[first_col][0]
+                self.status_callback(f"Выделена область: {x1:.2f} - {x2:.2f} с, среднее {first_col} = {mean_val:.3f}")
+            else:
+                self.status_callback(f"Выделена область: {x1:.2f} - {x2:.2f} с (нет числовых данных)")
+    
+    def clear_selection(self):
+        """Удаляет область выделения и перерисовывает график"""
+        self._clear_rects()
+        if self.selection_callback:
+            self.selection_callback(None, None, None)   # сигнал очистки
     
     def update(self):
         self.show_plots()
-    
-    def clear_selection(self):
-        if self.rect is not None:
-            self.rect.remove()
-            self.rect = None
-            self.canvas.draw_idle()

@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import filedialog, messagebox, Radiobutton, StringVar, Frame, Label, Spinbox, DoubleVar, IntVar, Button, Toplevel, Checkbutton, BooleanVar
+from tkinter import filedialog, messagebox, Radiobutton, StringVar, Frame, Label, Spinbox, DoubleVar, IntVar, Button, Toplevel, Checkbutton, BooleanVar, Text, Scrollbar
 import pandas as pd
 import numpy as np
 import os
@@ -211,7 +211,8 @@ class SpeedAnalyzerApp:
         
         self.plot_manager = PlotManager(self.figure_frame)
         self.plot_manager.set_status_callback(self.update_status)
-        self.plot_manager.set_hover_callback(self.on_hover)  # <-- устанавливаем callback
+        self.plot_manager.set_hover_callback(self.on_hover)
+        self.plot_manager.set_selection_callback(self.on_selection)   # новый callback
         
         # Правая панель
         self.control_panel = Frame(main_container, width=300, relief=tk.GROOVE, bd=2)
@@ -259,9 +260,9 @@ class SpeedAnalyzerApp:
         
         tk.Frame(self.control_panel, height=2, bd=1, relief=tk.SUNKEN).pack(fill=tk.X, padx=10, pady=10)
         
-        # Кнопки
+        # Кнопки управления выбором
         btn_frame = Frame(self.control_panel)
-        btn_frame.pack(pady=10)
+        btn_frame.pack(pady=5)
         
         btn_apply = Button(btn_frame, text="Применить выбор", 
                            command=self.apply_changes, font=('Arial', 10),
@@ -272,6 +273,31 @@ class SpeedAnalyzerApp:
                            command=self.reset_selection, font=('Arial', 10),
                            bg='#FF9800', fg='white', padx=15, pady=5)
         btn_reset.pack(side=tk.LEFT, padx=5)
+        
+        # ---- Новая секция для выделенной области ----
+        tk.Frame(self.control_panel, height=2, bd=1, relief=tk.SUNKEN).pack(fill=tk.X, padx=10, pady=10)
+        
+        lbl_selection_title = Label(self.control_panel, text="Статистика выделенной области", 
+                                    font=('Arial', 10, 'bold'))
+        lbl_selection_title.pack(anchor=tk.W, padx=15, pady=5)
+        
+        # Кнопка очистки выделения
+        btn_clear_selection = Button(self.control_panel, text="Очистить выделение", 
+                                     command=self.clear_selection, font=('Arial', 10),
+                                     bg='#f44336', fg='white', padx=10, pady=3)
+        btn_clear_selection.pack(anchor=tk.W, padx=15, pady=5)
+        
+        # Текстовое поле для вывода статистики
+        self.selection_text = Text(self.control_panel, height=12, width=35, 
+                                   font=('Courier', 8), relief=tk.SUNKEN, bd=1)
+        self.selection_text.pack(fill=tk.BOTH, expand=True, padx=15, pady=5)
+        
+        # Добавим скролл
+        scrollbar = Scrollbar(self.control_panel, command=self.selection_text.yview)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y, padx=(0, 15))
+        self.selection_text.config(yscrollcommand=scrollbar.set)
+        
+        # ---- Конец новой секции ----
         
         # Информация при наведении
         tk.Frame(self.control_panel, height=2, bd=1, relief=tk.SUNKEN).pack(fill=tk.X, padx=10, pady=10)
@@ -284,9 +310,45 @@ class SpeedAnalyzerApp:
                                  wraplength=280, anchor='w')
         self.hover_label.pack(anchor=tk.W, padx=15, pady=5, fill=tk.X)
         
-        # Информация
         self.lbl_info = Label(self.control_panel, text="", font=('Arial', 8), fg='gray')
         self.lbl_info.pack(pady=5)
+    
+    # --- Новый метод обработки выделения ---
+    def on_selection(self, x1, x2, stats):
+        """Вызывается при выделении области на графике"""
+        if x1 is None and stats is None:
+            # сигнал очистки
+            self.selection_text.delete(1.0, tk.END)
+            self.selection_text.insert(tk.END, "Выделение очищено")
+            return
+        
+        self.selection_text.delete(1.0, tk.END)
+        if not stats:
+            self.selection_text.insert(tk.END, "Нет числовых данных в выделенной области")
+            return
+        
+        header = f"Интервал: {x1:.2f} – {x2:.2f} с\n\n"
+        self.selection_text.insert(tk.END, header)
+        for col, (mean, minv, maxv, std) in stats.items():
+            # Получаем единицу, если есть
+            unit = self.plot_manager.get_unit(col)
+            unit_str = f" ({unit})" if unit else ""
+            line = (f"{col}{unit_str}:\n"
+                    f"  среднее = {mean:.3f}\n"
+                    f"  мин     = {minv:.3f}\n"
+                    f"  макс    = {maxv:.3f}\n"
+                    f"  ст.откл = {std:.3f}\n\n")
+            self.selection_text.insert(tk.END, line)
+        self.selection_text.see(1.0)  # прокрутка в начало
+    
+    def clear_selection(self):
+        """Очищает выделение и обновляет график"""
+        self.plot_manager.clear_selection()
+        # также очищаем текстовую область (вызовется через callback, но на всякий случай)
+        self.selection_text.delete(1.0, tk.END)
+        self.selection_text.insert(tk.END, "Выделение очищено")
+        self.status_var.set("Выделение очищено")
+    # --- конец новых методов ---
     
     def on_hover(self, time, data_dict):
         """Обновляет информацию при наведении на график"""
@@ -295,10 +357,8 @@ class SpeedAnalyzerApp:
             return
         
         lines = []
-        # Сортируем для удобства
         for col, value in sorted(data_dict.items()):
             if value is not None and np.isfinite(value):
-                # Добавим единицы, если известны
                 unit = self.plot_manager.get_unit(col)
                 if unit:
                     lines.append(f"{col} ({unit}): {value:.3f}")
