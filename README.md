@@ -39,7 +39,7 @@
 
 ```bash
 git clone https://github.com/ваш-логин/train-speed-analyzer.git
-cd smooth-train-analytics
+cd train-speed-analyzer
 ```
 
 ### 2. Установить зависимости
