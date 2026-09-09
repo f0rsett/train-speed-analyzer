@@ -212,7 +212,7 @@ class SpeedAnalyzerApp:
         self.plot_manager = PlotManager(self.figure_frame)
         self.plot_manager.set_status_callback(self.update_status)
         self.plot_manager.set_hover_callback(self.on_hover)
-        self.plot_manager.set_selection_callback(self.on_selection)   # новый callback
+        self.plot_manager.set_selection_callback(self.on_selection)
         
         # Правая панель
         self.control_panel = Frame(main_container, width=300, relief=tk.GROOVE, bd=2)
@@ -273,33 +273,40 @@ class SpeedAnalyzerApp:
                            command=self.reset_selection, font=('Arial', 10),
                            bg='#FF9800', fg='white', padx=15, pady=5)
         btn_reset.pack(side=tk.LEFT, padx=5)
-        
-        # ---- Новая секция для выделенной области ----
+
+        # ---- Переключатель режима выделения ----
+        tk.Frame(self.control_panel, height=2, bd=1, relief=tk.SUNKEN).pack(fill=tk.X, padx=10, pady=10)
+        self.selection_mode_var = BooleanVar(value=False)
+        cb_selection = Checkbutton(
+            self.control_panel,
+            text="Режим выделения (вкл/выкл)",
+            variable=self.selection_mode_var,
+            command=self.toggle_selection_mode,
+            font=('Arial', 10)
+        )
+        cb_selection.pack(anchor=tk.W, padx=15, pady=5)
+
+        # ---- Статистика выделенной области ----
         tk.Frame(self.control_panel, height=2, bd=1, relief=tk.SUNKEN).pack(fill=tk.X, padx=10, pady=10)
         
         lbl_selection_title = Label(self.control_panel, text="Статистика выделенной области", 
                                     font=('Arial', 10, 'bold'))
         lbl_selection_title.pack(anchor=tk.W, padx=15, pady=5)
         
-        # Кнопка очистки выделения
         btn_clear_selection = Button(self.control_panel, text="Очистить выделение", 
                                      command=self.clear_selection, font=('Arial', 10),
                                      bg='#f44336', fg='white', padx=10, pady=3)
         btn_clear_selection.pack(anchor=tk.W, padx=15, pady=5)
         
-        # Текстовое поле для вывода статистики
         self.selection_text = Text(self.control_panel, height=12, width=35, 
                                    font=('Courier', 8), relief=tk.SUNKEN, bd=1)
         self.selection_text.pack(fill=tk.BOTH, expand=True, padx=15, pady=5)
         
-        # Добавим скролл
         scrollbar = Scrollbar(self.control_panel, command=self.selection_text.yview)
         scrollbar.pack(side=tk.RIGHT, fill=tk.Y, padx=(0, 15))
         self.selection_text.config(yscrollcommand=scrollbar.set)
         
-        # ---- Конец новой секции ----
-        
-        # Информация при наведении
+        # ---- Информация при наведении ----
         tk.Frame(self.control_panel, height=2, bd=1, relief=tk.SUNKEN).pack(fill=tk.X, padx=10, pady=10)
         lbl_hover_title = Label(self.control_panel, text="Значения в точке:", 
                                 font=('Arial', 9, 'bold'))
@@ -312,12 +319,13 @@ class SpeedAnalyzerApp:
         
         self.lbl_info = Label(self.control_panel, text="", font=('Arial', 8), fg='gray')
         self.lbl_info.pack(pady=5)
-    
-    # --- Новый метод обработки выделения ---
+
+    def toggle_selection_mode(self):
+        enabled = self.selection_mode_var.get()
+        self.plot_manager.set_selection_mode(enabled)
+
     def on_selection(self, x1, x2, stats):
-        """Вызывается при выделении области на графике"""
         if x1 is None and stats is None:
-            # сигнал очистки
             self.selection_text.delete(1.0, tk.END)
             self.selection_text.insert(tk.END, "Выделение очищено")
             return
@@ -330,7 +338,6 @@ class SpeedAnalyzerApp:
         header = f"Интервал: {x1:.2f} – {x2:.2f} с\n\n"
         self.selection_text.insert(tk.END, header)
         for col, (mean, minv, maxv, std) in stats.items():
-            # Получаем единицу, если есть
             unit = self.plot_manager.get_unit(col)
             unit_str = f" ({unit})" if unit else ""
             line = (f"{col}{unit_str}:\n"
@@ -339,19 +346,15 @@ class SpeedAnalyzerApp:
                     f"  макс    = {maxv:.3f}\n"
                     f"  ст.откл = {std:.3f}\n\n")
             self.selection_text.insert(tk.END, line)
-        self.selection_text.see(1.0)  # прокрутка в начало
+        self.selection_text.see(1.0)
     
     def clear_selection(self):
-        """Очищает выделение и обновляет график"""
         self.plot_manager.clear_selection()
-        # также очищаем текстовую область (вызовется через callback, но на всякий случай)
         self.selection_text.delete(1.0, tk.END)
         self.selection_text.insert(tk.END, "Выделение очищено")
         self.status_var.set("Выделение очищено")
-    # --- конец новых методов ---
     
     def on_hover(self, time, data_dict):
-        """Обновляет информацию при наведении на график"""
         if time is None or not data_dict:
             self.hover_label.config(text="Наведите курсор на график")
             return
@@ -429,28 +432,14 @@ class SpeedAnalyzerApp:
                 self.time_col = time_col
                 self.df_full = df_full
                 
+                # Очищаем выбор столбцов, чтобы график не строился автоматически
                 self.top_columns = []
                 self.bottom_columns = []
                 self.lbl_top_selected.config(text="не выбрано")
                 self.lbl_bottom_selected.config(text="не выбрано")
                 
-                cols = [col for col in df_full.columns if col != time_col]
-                if 'скорость' in cols:
-                    self.top_columns = ['скорость']
-                    self.lbl_top_selected.config(text="скорость")
-                if 'Уклон' in cols:
-                    self.bottom_columns = ['Уклон']
-                    self.lbl_bottom_selected.config(text="Уклон")
-                
-                if not self.top_columns and cols:
-                    self.top_columns = [cols[0]]
-                    self.lbl_top_selected.config(text=cols[0])
-                if not self.bottom_columns and len(cols) > 1:
-                    self.bottom_columns = [cols[1]]
-                    self.lbl_bottom_selected.config(text=cols[1])
-                
-                if self.top_columns or self.bottom_columns:
-                    self.apply_changes()
+                # Сообщаем пользователю, что данные загружены, но график не построен
+                self.status_var.set(f"Данные загружены. Нажмите 'Выполнить расчёт' для построения графиков.")
                 
             except Exception as e:
                 messagebox.showerror("Ошибка", f"Не удалось прочитать файл:\n{str(e)}")
@@ -518,10 +507,24 @@ class SpeedAnalyzerApp:
                 df['Скорость в коридоре (км/ч)'] = np.full(len(V), np.nan)
             
             self.df_full = df
+            
+            # ---- Устанавливаем столбцы для графиков по умолчанию ----
+            # Верхний: сглаженная скорость (если есть), иначе исходная скорость
+            top_default = 'Сглаженная скорость (км/ч)' if 'Сглаженная скорость (км/ч)' in df.columns else 'скорость'
+            bottom_default = 'Ускорение (м/с²)'
+            
+            self.top_columns = [top_default]
+            self.bottom_columns = [bottom_default]
+            
+            # Обновляем метки на панели
+            self.lbl_top_selected.config(text=top_default)
+            self.lbl_bottom_selected.config(text=bottom_default)
+            
+            # Строим графики
             self.apply_changes()
             
             self.status_var.set("Расчёт выполнен!")
-            messagebox.showinfo("Успех", "Расчёт выполнен успешно!")
+            messagebox.showinfo("Успех", "Расчёт выполнен успешно!\nГрафики построены со скоростью и ускорением.")
             
         except Exception as e:
             self.status_var.set("Ошибка!")
@@ -546,27 +549,16 @@ class SpeedAnalyzerApp:
         self.status_var.set("Графики обновлены")
     
     def reset_selection(self):
+        # При сбросе просто очищаем выбор, без автоматического построения
         self.top_columns = []
         self.bottom_columns = []
         self.lbl_top_selected.config(text="не выбрано")
         self.lbl_bottom_selected.config(text="не выбрано")
-        
+        # Если есть данные, можно показать сообщение, но график не строим
         if self.df_full is not None:
-            cols = [col for col in self.df_full.columns if col != self.time_col]
-            if 'скорость' in cols:
-                self.top_columns = ['скорость']
-                self.lbl_top_selected.config(text="скорость")
-            if 'Уклон' in cols:
-                self.bottom_columns = ['Уклон']
-                self.lbl_bottom_selected.config(text="Уклон")
-            if not self.top_columns and cols:
-                self.top_columns = [cols[0]]
-                self.lbl_top_selected.config(text=cols[0])
-            if not self.bottom_columns and len(cols) > 1:
-                self.bottom_columns = [cols[1]]
-                self.lbl_bottom_selected.config(text=cols[1])
-        
-        self.apply_changes()
+            self.status_var.set("Выбор сброшен. Нажмите 'Выполнить расчёт' или выберите столбцы вручную.")
+        else:
+            self.status_var.set("Выбор сброшен.")
     
     # Параметры алгоритмов
     def clear_params(self):

@@ -34,7 +34,7 @@ class PlotManager:
         self.vline1 = None
         self.vline2 = None
         
-        self.rects = []           # список объектов axvspan (на обоих осях)
+        self.rects = []
         self.press_x = None
         self.is_dragging = False
         
@@ -47,7 +47,11 @@ class PlotManager:
         self.status_callback = None
         self.hover_callback = None
         self.selection_callback = None
-    
+
+        # ---- Режим выделения ----
+        self.selection_mode = False
+        self.toolbar = None
+
     def set_data(self, df, time_col, top_columns, bottom_columns):
         self.df = df
         self.time_col = time_col
@@ -65,7 +69,14 @@ class PlotManager:
     
     def get_unit(self, column):
         return UNITS.get(column, "")
-    
+
+    def set_selection_mode(self, enabled):
+        self.selection_mode = enabled
+        if not enabled:
+            self.clear_selection()
+        if self.status_callback:
+            self.status_callback(f"Режим выделения {'включен' if enabled else 'выключен'}")
+
     def show_plots(self):
         if self.df is None or self.time_col is None:
             return
@@ -142,6 +153,7 @@ class PlotManager:
         self._add_interactivity(canvas, ax1, ax2)
         
         toolbar = NavigationToolbar2Tk(canvas, self.figure_frame)
+        self.toolbar = toolbar
         toolbar.update()
         
         canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
@@ -212,15 +224,16 @@ class PlotManager:
             self.status_callback("Готов к работе")
     
     def on_press(self, event):
+        if not self.selection_mode:
+            return
+        # Убираем проверку на toolbar, чтобы выделение работало всегда
         if event.inaxes is None:
             return
         self.press_x = event.xdata
         self.is_dragging = True
-        # Удаляем предыдущие области
         self._clear_rects()
     
     def _clear_rects(self):
-        """Удаляет все объекты выделения из списка"""
         for rect in self.rects:
             try:
                 rect.remove()
@@ -231,9 +244,11 @@ class PlotManager:
             self.canvas.draw_idle()
     
     def on_motion(self, event):
+        if not self.selection_mode:
+            return
         if not self.is_dragging or event.inaxes is None:
             return
-        # Удаляем старые области перед рисованием новых
+        # Удаляем старые области
         self._clear_rects()
         x1 = self.press_x
         x2 = event.xdata
@@ -241,9 +256,12 @@ class PlotManager:
         r1 = self.ax1.axvspan(x1, x2, alpha=0.3, color='yellow')
         r2 = self.ax2.axvspan(x1, x2, alpha=0.3, color='yellow')
         self.rects = [r1, r2]
-        self.canvas.draw_idle()
+        # Принудительно перерисовываем
+        self.canvas.draw()
     
     def on_release(self, event):
+        if not self.selection_mode:
+            return
         if event.inaxes is None or not self.is_dragging:
             return
         self.is_dragging = False
@@ -280,10 +298,9 @@ class PlotManager:
                 self.status_callback(f"Выделена область: {x1:.2f} - {x2:.2f} с (нет числовых данных)")
     
     def clear_selection(self):
-        """Удаляет область выделения и перерисовывает график"""
         self._clear_rects()
         if self.selection_callback:
-            self.selection_callback(None, None, None)   # сигнал очистки
+            self.selection_callback(None, None, None)
     
     def update(self):
         self.show_plots()
