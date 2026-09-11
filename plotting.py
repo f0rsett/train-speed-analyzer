@@ -6,27 +6,44 @@ import pandas as pd
 
 UNITS = {
     'скорость': 'км/ч',
-    'Сглаженная скорость (км/ч)': 'км/ч',
+    'Сглаженная скорость': 'км/ч',
     'Скорость в м/с': 'м/с',
-    'Ускорение (м/с²)': 'м/с²',
-    'Ускорение сглаженное (м/с²)': 'м/с²',
-    'Скорость в коридоре (км/ч)': 'км/ч',
+    'Ускорение': 'м/с²',
+    'Ускорение сглаженное': 'м/с²',
+    'Скорость в коридоре': 'км/ч',
     'Уклон': '‰',
     'ТЦ': 'кгс/см²',
     'ТМ': 'кгс/см²',
     'ГР': 'кгс/см²',
     'тяга': 'кН',
     'тормоз': 'кН',
-    'Нижняя граница (км/ч)': 'км/ч',
-    'Верхняя граница (км/ч)': 'км/ч',
-    'Нижняя граница ускорения (м/с²)': 'м/с²',
-    'Верхняя граница ускорения (м/с²)': 'м/с²',
+    'Нижняя граница скорости': 'км/ч',
+    'Верхняя граница скорости': 'км/ч',
+    'Нижняя граница ускорения': 'м/с²',
+    'Верхняя граница ускорения': 'м/с²',
+}
+
+EXCLUDED_COLUMNS = {
+    'KLUB_Svetofor',
+    'KLUB_Coord',
+    'KLUB_PUR',
+    'Af_sr[1]',
+    'Freal',
 }
 
 
+class QuietToolbar(NavigationToolbar2Tk):
+    """Тулбар matplotlib без вывода координат x/y в правом углу."""
+
+    def set_message(self, s):
+        # Намеренно ничего не делаем — координаты не отображаются.
+        pass
+
+
 class PlotManager:
-    def __init__(self, figure_frame):
+    def __init__(self, figure_frame, toolbar_frame=None):
         self.figure_frame = figure_frame
+        self.toolbar_frame = toolbar_frame
         self.df = None
         self.time_col = None
         self.top_columns = []
@@ -57,6 +74,9 @@ class PlotManager:
 
         self.selection_mode = False
         self.toolbar = None
+
+    def set_toolbar_frame(self, frame):
+        self.toolbar_frame = frame
 
     def set_data(self, df, time_col, top_columns, bottom_columns, show_corridor=False):
         self.df = df
@@ -93,28 +113,37 @@ class PlotManager:
         for widget in self.figure_frame.winfo_children():
             widget.destroy()
 
+        if self.toolbar is not None:
+            try:
+                self.toolbar.destroy()
+            except Exception:
+                pass
+            self.toolbar = None
+        if self.toolbar_frame is not None:
+            for w in self.toolbar_frame.winfo_children():
+                w.destroy()
+
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 6))
 
         time = self.df[self.time_col].values
         colors = plt.cm.tab10(np.linspace(0, 1, 10))
         color_idx = 0
 
-        # ---- Верхний график (скорость) ----
         for col in self.top_columns:
             if col not in self.df.columns:
                 continue
             y = self.df[col].values
             label = col
-            if col in UNITS:
-                label = f"{col} ({UNITS[col]})"
+            unit = UNITS.get(col, "")
+            if unit:
+                label = f"{col} ({unit})"
             ax1.plot(time, y, label=label,
                      color=colors[color_idx % len(colors)], linewidth=1.5)
             color_idx += 1
 
-        # ---- Коридор скорости ----
         if self.show_corridor:
-            low_col = 'Нижняя граница (км/ч)'
-            high_col = 'Верхняя граница (км/ч)'
+            low_col = 'Нижняя граница скорости'
+            high_col = 'Верхняя граница скорости'
             if low_col in self.df.columns and high_col in self.df.columns:
                 low = self.df[low_col].values
                 high = self.df[high_col].values
@@ -123,31 +152,34 @@ class PlotManager:
                 ax1.plot(time, low, '--', color='gray', linewidth=1, alpha=0.7)
                 ax1.plot(time, high, '--', color='gray', linewidth=1, alpha=0.7)
 
+        top_title = "Верхний график"
+        if self.top_columns:
+            top_title += f" ({', '.join(self.top_columns)})"
+
         ax1.set_ylabel('Значение')
-        ax1.set_title('Верхний график (скорость)')
+        ax1.set_title(top_title)
         handles, labels = ax1.get_legend_handles_labels()
         if handles:
             ax1.legend(loc='best')
         ax1.grid(True, alpha=0.3)
         ax1.set_xlim(time.min(), time.max())
 
-        # ---- Нижний график (ускорение) ----
         color_idx = 0
         for col in self.bottom_columns:
             if col not in self.df.columns:
                 continue
             y = self.df[col].values
             label = col
-            if col in UNITS:
-                label = f"{col} ({UNITS[col]})"
+            unit = UNITS.get(col, "")
+            if unit:
+                label = f"{col} ({unit})"
             ax2.plot(time, y, label=label,
                      color=colors[color_idx % len(colors)], linewidth=1.5)
             color_idx += 1
 
-        # ---- Коридор ускорения ----
         if self.show_corridor:
-            low_col = 'Нижняя граница ускорения (м/с²)'
-            high_col = 'Верхняя граница ускорения (м/с²)'
+            low_col = 'Нижняя граница ускорения'
+            high_col = 'Верхняя граница ускорения'
             if low_col in self.df.columns and high_col in self.df.columns:
                 low = self.df[low_col].values
                 high = self.df[high_col].values
@@ -156,16 +188,19 @@ class PlotManager:
                 ax2.plot(time, low, '--', color='gray', linewidth=1, alpha=0.7)
                 ax2.plot(time, high, '--', color='gray', linewidth=1, alpha=0.7)
 
+        bottom_title = "Нижний график"
+        if self.bottom_columns:
+            bottom_title += f" ({', '.join(self.bottom_columns)})"
+
         ax2.set_ylabel('Значение')
         ax2.set_xlabel('Время')
-        ax2.set_title('Нижний график (ускорение)')
+        ax2.set_title(bottom_title)
         handles, labels = ax2.get_legend_handles_labels()
         if handles:
             ax2.legend(loc='best')
         ax2.grid(True, alpha=0.3)
         ax2.set_xlim(time.min(), time.max())
 
-        # ---- Автоматическая настройка Y-границ ----
         for ax in (ax1, ax2):
             if ax.lines:
                 y_min = np.inf
@@ -204,9 +239,15 @@ class PlotManager:
 
         self._add_interactivity(canvas, ax1, ax2)
 
-        toolbar = NavigationToolbar2Tk(canvas, self.figure_frame)
-        self.toolbar = toolbar
-        toolbar.update()
+        # --- Используем QuietToolbar вместо NavigationToolbar2Tk ---
+        if self.toolbar_frame is not None:
+            toolbar = QuietToolbar(canvas, self.toolbar_frame)
+            self.toolbar = toolbar
+            toolbar.update()
+        else:
+            toolbar = QuietToolbar(canvas, self.figure_frame)
+            self.toolbar = toolbar
+            toolbar.update()
 
         canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
 
@@ -246,6 +287,8 @@ class PlotManager:
         for col in self.df.columns:
             if col == self.time_col:
                 continue
+            if col in EXCLUDED_COLUMNS:
+                continue
             if pd.api.types.is_numeric_dtype(self.df[col]):
                 if idx < len(self.df):
                     val = self.df[col].iloc[idx]
@@ -279,7 +322,7 @@ class PlotManager:
         for rect in self.rects:
             try:
                 rect.remove()
-            except:
+            except Exception:
                 pass
         self.rects.clear()
         if self.canvas:
@@ -315,6 +358,8 @@ class PlotManager:
         stats = {}
         for col in self.df.columns:
             if col == self.time_col:
+                continue
+            if col in EXCLUDED_COLUMNS:
                 continue
             if pd.api.types.is_numeric_dtype(self.df[col]):
                 vals = self.df[col][mask].values

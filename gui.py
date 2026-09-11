@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import filedialog, messagebox, Radiobutton, StringVar, Frame, Label, Spinbox, DoubleVar, IntVar, Button, Toplevel, Checkbutton, BooleanVar, Text, Scrollbar
+from tkinter import filedialog, messagebox, StringVar, Frame, Label, Spinbox, DoubleVar, IntVar, Button, Toplevel, Checkbutton, BooleanVar, Text, Scrollbar, ttk
 import pandas as pd
 import numpy as np
 import os
@@ -123,6 +123,9 @@ class SpeedAnalyzerApp:
         self.top_columns = []
         self.bottom_columns = []
 
+        self.default_top_columns = []
+        self.default_bottom_columns = []
+
         self.corridor_percent_speed = DoubleVar(value=0.1)
         self.corridor_percent_accel = DoubleVar(value=0.1)
 
@@ -137,7 +140,15 @@ class SpeedAnalyzerApp:
         self.savgol_order = IntVar(value=3)
 
         self.algorithm = StringVar(value="default")
-        self.algorithm.trace_add('write', self.on_algorithm_change)
+
+        self.algorithm_display = {
+            "Стандартный (двойное сглаживание)": "default",
+            "Экспоненциальное сглаживание": "exponential",
+            "Фильтр Калмана": "kalman",
+            "Медианный фильтр": "median",
+            "Фильтр Савицкого – Голея": "savgol",
+        }
+        self.algorithm_reverse = {v: k for k, v in self.algorithm_display.items()}
 
         self.smooth_speed_var = BooleanVar(value=True)
         self.smooth_accel_var = BooleanVar(value=False)
@@ -148,7 +159,20 @@ class SpeedAnalyzerApp:
         self.create_widgets()
 
     def create_widgets(self):
-        top_frame = tk.Frame(self.root)
+        self.status_var = tk.StringVar()
+        self.status_var.set("Готов к работе")
+        status_bar = tk.Label(self.root, textvariable=self.status_var,
+                              relief=tk.SUNKEN, anchor=tk.W, font=('Arial', 9))
+        status_bar.pack(side=tk.BOTTOM, fill=tk.X)
+
+        main_split = Frame(self.root)
+        main_split.pack(fill=tk.BOTH, expand=True)
+
+        left_container = Frame(main_split)
+        left_container.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        # ---- Верхняя панель ----
+        top_frame = tk.Frame(left_container)
         top_frame.pack(pady=10, padx=10, fill='x')
 
         btn_select = tk.Button(top_frame, text="Выбрать Excel-файл",
@@ -163,58 +187,52 @@ class SpeedAnalyzerApp:
         btn_calc = tk.Button(top_frame, text="Выполнить расчёт",
                              command=self.calculate, font=('Arial', 12),
                              bg='#2196F3', fg='white', padx=20, pady=5)
-        btn_calc.pack(side=tk.RIGHT, padx=5)
+        btn_calc.pack(side=tk.LEFT, padx=5)
 
-        algo_frame = Frame(self.root)
-        algo_frame.pack(pady=5, padx=10, fill='x')
+        # ---- Алгоритм + Опции в одной строке ----
+        controls_frame = Frame(left_container)
+        controls_frame.pack(pady=5, padx=10, fill='x')
 
-        lbl_algo = tk.Label(algo_frame, text="Выберите алгоритм сглаживания:",
+        lbl_algo = tk.Label(controls_frame, text="Алгоритм сглаживания:",
                             font=('Arial', 10, 'bold'))
         lbl_algo.pack(side=tk.LEFT, padx=5)
 
-        algorithms = [
-            ("Стандартный (двойное сглаживание)", "default"),
-            ("Экспоненциальное сглаживание", "exponential"),
-            ("Фильтр Калмана", "kalman"),
-            ("Медианный фильтр", "median"),
-            ("Фильтр Савицкого – Голея", "savgol")
-        ]
+        self.cb_algo = ttk.Combobox(
+            controls_frame,
+            values=list(self.algorithm_display.keys()),
+            state='readonly',
+            width=30,
+            font=('Arial', 10)
+        )
+        self.cb_algo.set(self.algorithm_reverse[self.algorithm.get()])
+        self.cb_algo.pack(side=tk.LEFT, padx=5)
+        self.cb_algo.bind('<<ComboboxSelected>>', self.on_algorithm_selected)
 
-        for text, value in algorithms:
-            rb = Radiobutton(algo_frame, text=text,
-                             variable=self.algorithm, value=value,
-                             font=('Arial', 9))
-            rb.pack(side=tk.LEFT, padx=5)
+        # разделитель
+        tk.Frame(controls_frame, width=2, bd=1, relief=tk.SUNKEN).pack(
+            side=tk.LEFT, fill=tk.Y, padx=15, pady=2)
 
-        target_frame = Frame(self.root)
-        target_frame.pack(pady=5, padx=10, fill='x')
-
-        lbl_target = tk.Label(target_frame, text="Опции:", font=('Arial', 10, 'bold'))
+        lbl_target = tk.Label(controls_frame, text="Опции:",
+                              font=('Arial', 10, 'bold'))
         lbl_target.pack(side=tk.LEFT, padx=5)
 
-        cb_speed = Checkbutton(target_frame, text="Сгладить скорость",
+        cb_speed = Checkbutton(controls_frame, text="Сгладить скорость",
                                variable=self.smooth_speed_var,
                                font=('Arial', 9))
         cb_speed.pack(side=tk.LEFT, padx=5)
 
-        cb_accel = Checkbutton(target_frame, text="Сгладить ускорение",
+        cb_accel = Checkbutton(controls_frame, text="Сгладить ускорение",
                                variable=self.smooth_accel_var,
                                font=('Arial', 9))
         cb_accel.pack(side=tk.LEFT, padx=5)
 
-        # Чекбокс коридора — создаём, но показываем только для стандартного алгоритма
-        self.cb_corridor = Checkbutton(target_frame, text="Показать коридор",
+        self.cb_corridor = Checkbutton(controls_frame, text="Показать коридор",
                                        variable=self.show_corridor_var,
                                        font=('Arial', 9))
         self.cb_corridor.pack(side=tk.LEFT, padx=5)
 
-        self.status_var = tk.StringVar()
-        self.status_var.set("Готов к работе")
-        status_bar = tk.Label(self.root, textvariable=self.status_var,
-                              relief=tk.SUNKEN, anchor=tk.W, font=('Arial', 9))
-        status_bar.pack(side=tk.BOTTOM, fill=tk.X)
-
-        self.params_frame = Frame(self.root, relief=tk.GROOVE, bd=2)
+        # ---- Параметры алгоритма ----
+        self.params_frame = Frame(left_container, relief=tk.GROOVE, bd=2)
         self.params_frame.pack(pady=5, padx=10, fill='x')
 
         lbl_params = tk.Label(self.params_frame, text="Параметры алгоритма:",
@@ -225,35 +243,39 @@ class SpeedAnalyzerApp:
         self.params_container.pack(side=tk.LEFT, padx=10, fill='x', expand=True)
         self.show_default_params()
 
-        main_container = Frame(self.root)
-        main_container.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        self.figure_frame = Frame(left_container)
+        self.figure_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
-        self.figure_frame = Frame(main_container)
-        self.figure_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        # ---- Правая панель ----
+        self.control_panel = Frame(main_split, width=380, relief=tk.GROOVE, bd=2)
+        self.control_panel.pack(side=tk.RIGHT, fill=tk.Y, padx=(10, 0))
+        self.control_panel.pack_propagate(False)
 
-        self.plot_manager = PlotManager(self.figure_frame)
+        self.toolbar_frame = Frame(self.control_panel)
+
+        self.plot_manager = PlotManager(self.figure_frame,
+                                        toolbar_frame=self.toolbar_frame)
         self.plot_manager.set_status_callback(self.update_status)
         self.plot_manager.set_hover_callback(self.on_hover)
         self.plot_manager.set_selection_callback(self.on_selection)
 
-        self.control_panel = Frame(main_container, width=300, relief=tk.GROOVE, bd=2)
-        self.control_panel.pack(side=tk.RIGHT, fill=tk.Y, padx=(10, 0))
-        self.control_panel.pack_propagate(False)
-
         self.create_control_panel()
 
-        # --- Управление видимостью чекбокса «Показать коридор» ---
         self._update_corridor_checkbox_visibility()
 
+    def on_algorithm_selected(self, event=None):
+        display = self.cb_algo.get()
+        code = self.algorithm_display.get(display, "default")
+        self.algorithm.set(code)
+        self.on_algorithm_change()
+
     def _update_corridor_checkbox_visibility(self):
-        """Показывает чекбокс коридора только для стандартного алгоритма."""
         is_default = (self.algorithm.get() == "default")
         if is_default:
             if not self.cb_corridor.winfo_ismapped():
                 self.cb_corridor.pack(side=tk.LEFT, padx=5)
         else:
             self.cb_corridor.pack_forget()
-            # При переключении на другой алгоритм сбрасываем галочку
             self.show_corridor_var.set(False)
 
     def create_control_panel(self):
@@ -274,7 +296,7 @@ class SpeedAnalyzerApp:
         self.btn_top.pack(fill=tk.X, padx=15, pady=5)
 
         self.lbl_top_selected = Label(self.control_panel, text="не выбрано",
-                                      font=('Arial', 8), fg='gray', wraplength=270)
+                                      font=('Arial', 8), fg='gray', wraplength=340)
         self.lbl_top_selected.pack(anchor=tk.W, padx=15, pady=2)
 
         tk.Frame(self.control_panel, height=2, bd=1, relief=tk.SUNKEN).pack(
@@ -290,7 +312,7 @@ class SpeedAnalyzerApp:
         self.btn_bottom.pack(fill=tk.X, padx=15, pady=5)
 
         self.lbl_bottom_selected = Label(self.control_panel, text="не выбрано",
-                                         font=('Arial', 8), fg='gray', wraplength=270)
+                                         font=('Arial', 8), fg='gray', wraplength=340)
         self.lbl_bottom_selected.pack(anchor=tk.W, padx=15, pady=2)
 
         tk.Frame(self.control_panel, height=2, bd=1, relief=tk.SUNKEN).pack(
@@ -311,6 +333,13 @@ class SpeedAnalyzerApp:
 
         tk.Frame(self.control_panel, height=2, bd=1, relief=tk.SUNKEN).pack(
             fill=tk.X, padx=10, pady=10)
+        lbl_tools = Label(self.control_panel, text="Инструменты графика:",
+                          font=('Arial', 9, 'bold'))
+        lbl_tools.pack(anchor=tk.W, padx=15)
+        self.toolbar_frame.pack(fill=tk.X, padx=15, pady=5)
+
+        tk.Frame(self.control_panel, height=2, bd=1, relief=tk.SUNKEN).pack(
+            fill=tk.X, padx=10, pady=10)
         self.selection_mode_var = BooleanVar(value=False)
         cb_selection = Checkbutton(
             self.control_panel,
@@ -323,34 +352,63 @@ class SpeedAnalyzerApp:
 
         tk.Frame(self.control_panel, height=2, bd=1, relief=tk.SUNKEN).pack(
             fill=tk.X, padx=10, pady=10)
-        lbl_selection_title = Label(self.control_panel,
-                                    text="Статистика выделенной области",
-                                    font=('Arial', 10, 'bold'))
-        lbl_selection_title.pack(anchor=tk.W, padx=15, pady=5)
-
-        btn_clear_selection = Button(self.control_panel, text="Очистить выделение",
-                                     command=self.clear_selection, font=('Arial', 10),
-                                     bg='#f44336', fg='white', padx=10, pady=3)
-        btn_clear_selection.pack(anchor=tk.W, padx=15, pady=5)
-
-        self.selection_text = Text(self.control_panel, height=12, width=35,
-                                   font=('Courier', 8), relief=tk.SUNKEN, bd=1)
-        self.selection_text.pack(fill=tk.BOTH, expand=True, padx=15, pady=5)
-
-        scrollbar = Scrollbar(self.control_panel, command=self.selection_text.yview)
-        scrollbar.pack(side=tk.RIGHT, fill=tk.Y, padx=(0, 15))
-        self.selection_text.config(yscrollcommand=scrollbar.set)
-
-        tk.Frame(self.control_panel, height=2, bd=1, relief=tk.SUNKEN).pack(
-            fill=tk.X, padx=10, pady=10)
         lbl_hover_title = Label(self.control_panel, text="Значения в точке:",
                                 font=('Arial', 9, 'bold'))
         lbl_hover_title.pack(anchor=tk.W, padx=15)
 
-        self.hover_label = Label(self.control_panel, text="Наведите курсор на график",
-                                 font=('Arial', 8), fg='gray', justify=tk.LEFT,
-                                 wraplength=280, anchor='w')
-        self.hover_label.pack(anchor=tk.W, padx=15, pady=5, fill=tk.X)
+        hover_frame = Frame(self.control_panel)
+        hover_frame.pack(fill=tk.BOTH, expand=True, padx=15, pady=5)
+
+        self.hover_text = Text(hover_frame, height=15, width=40,
+                               font=('Courier', 8), relief=tk.SUNKEN, bd=1,
+                               wrap=tk.NONE)
+        hov_scroll_y = Scrollbar(hover_frame, orient=tk.VERTICAL,
+                                 command=self.hover_text.yview)
+        hov_scroll_x = Scrollbar(hover_frame, orient=tk.HORIZONTAL,
+                                 command=self.hover_text.xview)
+        self.hover_text.config(yscrollcommand=hov_scroll_y.set,
+                               xscrollcommand=hov_scroll_x.set)
+        self.hover_text.grid(row=0, column=0, sticky='nsew')
+        hov_scroll_y.grid(row=0, column=1, sticky='ns')
+        hov_scroll_x.grid(row=1, column=0, sticky='ew')
+        hover_frame.grid_rowconfigure(0, weight=1)
+        hover_frame.grid_columnconfigure(0, weight=1)
+
+        self.hover_text.insert(tk.END, "Наведите курсор на график")
+
+        tk.Frame(self.control_panel, height=2, bd=1, relief=tk.SUNKEN).pack(
+            fill=tk.X, padx=10, pady=10)
+
+        header_frame = Frame(self.control_panel)
+        header_frame.pack(fill=tk.X, padx=15, pady=5)
+
+        lbl_selection_title = Label(header_frame,
+                                    text="Статистика выделенной области",
+                                    font=('Arial', 10, 'bold'))
+        lbl_selection_title.pack(side=tk.LEFT)
+
+        btn_clear_selection = Button(header_frame, text="Очистить",
+                                     command=self.clear_selection, font=('Arial', 9),
+                                     bg='#f44336', fg='white', padx=8, pady=2)
+        btn_clear_selection.pack(side=tk.RIGHT)
+
+        selection_frame = Frame(self.control_panel)
+        selection_frame.pack(fill=tk.X, padx=15, pady=5)
+
+        self.selection_text = Text(selection_frame, height=8, width=40,
+                                   font=('Courier', 8), relief=tk.SUNKEN, bd=1,
+                                   wrap=tk.NONE)
+        sel_scroll_y = Scrollbar(selection_frame, orient=tk.VERTICAL,
+                                 command=self.selection_text.yview)
+        sel_scroll_x = Scrollbar(selection_frame, orient=tk.HORIZONTAL,
+                                 command=self.selection_text.xview)
+        self.selection_text.config(yscrollcommand=sel_scroll_y.set,
+                                   xscrollcommand=sel_scroll_x.set)
+        self.selection_text.grid(row=0, column=0, sticky='nsew')
+        sel_scroll_y.grid(row=0, column=1, sticky='ns')
+        sel_scroll_x.grid(row=1, column=0, sticky='ew')
+        selection_frame.grid_rowconfigure(0, weight=1)
+        selection_frame.grid_columnconfigure(0, weight=1)
 
         self.lbl_info = Label(self.control_panel, text="", font=('Arial', 8), fg='gray')
         self.lbl_info.pack(pady=5)
@@ -388,10 +446,15 @@ class SpeedAnalyzerApp:
         self.status_var.set("Выделение очищено")
 
     def on_hover(self, time, data_dict):
+        self.hover_text.config(state=tk.NORMAL)
+        self.hover_text.delete(1.0, tk.END)
+
         if time is None or not data_dict:
-            self.hover_label.config(text="Наведите курсор на график")
+            self.hover_text.insert(tk.END, "Наведите курсор на график")
+            self.hover_text.config(state=tk.DISABLED, height=15)
             return
-        lines = []
+
+        lines = [f"t = {time:.2f} с", ""]
         for col, value in sorted(data_dict.items()):
             if value is not None and np.isfinite(value):
                 unit = self.plot_manager.get_unit(col)
@@ -399,11 +462,12 @@ class SpeedAnalyzerApp:
                     lines.append(f"{col} ({unit}): {value:.3f}")
                 else:
                     lines.append(f"{col}: {value:.3f}")
-        if lines:
-            text = f"t = {time:.2f} с\n" + "\n".join(lines)
-            self.hover_label.config(text=text)
-        else:
-            self.hover_label.config(text=f"t = {time:.2f} с\n(нет данных)")
+        if len(lines) == 2:
+            lines.append("(нет данных)")
+
+        self.hover_text.insert(tk.END, "\n".join(lines))
+        self.hover_text.config(state=tk.DISABLED, height=max(15, len(lines)))
+        self.hover_text.see(1.0)
 
     def update_status(self, message):
         self.status_var.set(message)
@@ -417,10 +481,10 @@ class SpeedAnalyzerApp:
             messagebox.showwarning("Предупреждение", "Нет доступных столбцов.")
             return
         useful = ['Уклон', 'ТЦ', 'ТМ', 'скорость', 'ГР', 'тяга', 'тормоз',
-                  'Сглаженная скорость (км/ч)', 'Скорость в м/с', 'Ускорение (м/с²)',
-                  'Ускорение сглаженное (м/с²)', 'Скорость в коридоре (км/ч)',
-                  'Нижняя граница (км/ч)', 'Верхняя граница (км/ч)',
-                  'Нижняя граница ускорения (м/с²)', 'Верхняя граница ускорения (м/с²)']
+                  'Сглаженная скорость', 'Скорость в м/с', 'Ускорение',
+                  'Ускорение сглаженное', 'Скорость в коридоре',
+                  'Нижняя граница скорости', 'Верхняя граница скорости',
+                  'Нижняя граница ускорения', 'Верхняя граница ускорения']
         useful_cols = [col for col in useful if col in all_cols]
         default = self.top_columns if target == 'top' else self.bottom_columns
         dialog = ColumnSelectorDialog(
@@ -439,8 +503,6 @@ class SpeedAnalyzerApp:
             self.bottom_columns = selected
             self.lbl_bottom_selected.config(
                 text=", ".join(selected) if selected else "не выбрано")
-        if selected:
-            self.apply_changes()
 
     def select_file(self):
         filename = filedialog.askopenfilename(
@@ -460,6 +522,8 @@ class SpeedAnalyzerApp:
                 self.df_full = df_full
                 self.top_columns = []
                 self.bottom_columns = []
+                self.default_top_columns = []
+                self.default_bottom_columns = []
                 self.lbl_top_selected.config(text="не выбрано")
                 self.lbl_bottom_selected.config(text="не выбрано")
                 self.status_var.set(
@@ -487,11 +551,9 @@ class SpeedAnalyzerApp:
 
             df = self.df_full.copy()
 
-            # Убираем столбцы коридоров из предыдущих расчётов — они
-            # заполняются только при стандартном алгоритме.
             corridor_cols = [
-                'Нижняя граница (км/ч)', 'Верхняя граница (км/ч)',
-                'Нижняя граница ускорения (м/с²)', 'Верхняя граница ускорения (м/с²)'
+                'Нижняя граница скорости', 'Верхняя граница скорости',
+                'Нижняя граница ускорения', 'Верхняя граница ускорения'
             ]
             for c in corridor_cols:
                 if c in df.columns:
@@ -535,10 +597,9 @@ class SpeedAnalyzerApp:
 
             smooth_speed = self.smooth_speed_var.get()
             smooth_accel = self.smooth_accel_var.get()
-            show_corridor = self.show_corridor_var.get() and (self.algorithm.get() == "default")
             is_default = (self.algorithm.get() == "default")
+            show_corridor = self.show_corridor_var.get() and is_default
 
-            # --- Сглаживание скорости ---
             if smooth_speed:
                 if is_default:
                     smoothed_speed = self.processor.smooth_default(
@@ -553,20 +614,19 @@ class SpeedAnalyzerApp:
 
                 smoothed_speed_ms = smoothed_speed / 3.6
                 accel_from_smoothed = calculate_acceleration(smoothed_speed_ms, time)
-                df['Сглаженная скорость (км/ч)'] = smoothed_speed
+                df['Сглаженная скорость'] = smoothed_speed
                 df['Скорость в м/с'] = smoothed_speed_ms
-                df['Ускорение (м/с²)'] = accel_from_smoothed
+                df['Ускорение'] = accel_from_smoothed
                 current_accel = accel_from_smoothed
 
                 if is_default and show_corridor and low_speed is not None:
-                    df['Нижняя граница (км/ч)'] = low_speed
-                    df['Верхняя граница (км/ч)'] = high_speed
+                    df['Нижняя граница скорости'] = low_speed
+                    df['Верхняя граница скорости'] = high_speed
             else:
                 df['Скорость в м/с'] = V_ms
-                df['Ускорение (м/с²)'] = accel_orig
+                df['Ускорение'] = accel_orig
                 current_accel = accel_orig
 
-            # --- Сглаживание ускорения ---
             if smooth_accel:
                 if is_default:
                     smoothed_accel = self.processor.smooth_default(
@@ -580,15 +640,17 @@ class SpeedAnalyzerApp:
                         current_accel, len(current_accel), self.algorithm.get())
                     low_accel = high_accel = None
 
-                df['Ускорение сглаженное (м/с²)'] = smoothed_accel
+                df['Ускорение сглаженное'] = smoothed_accel
 
                 if is_default and show_corridor and low_accel is not None:
-                    df['Нижняя граница ускорения (м/с²)'] = low_accel
-                    df['Верхняя граница ускорения (м/с²)'] = high_accel
+                    df['Нижняя граница ускорения'] = low_accel
+                    df['Верхняя граница ускорения'] = high_accel
 
-            top_default = 'Сглаженная скорость (км/ч)' if smooth_speed else 'скорость'
-            bottom_default = ('Ускорение сглаженное (м/с²)'
-                              if smooth_accel else 'Ускорение (м/с²)')
+            top_default = 'Сглаженная скорость' if smooth_speed else 'скорость'
+            bottom_default = 'Ускорение сглаженное' if smooth_accel else 'Ускорение'
+
+            self.default_top_columns = [top_default]
+            self.default_bottom_columns = [bottom_default]
 
             self.top_columns = [top_default]
             self.bottom_columns = [bottom_default]
@@ -639,15 +701,38 @@ class SpeedAnalyzerApp:
         self.status_var.set("Графики обновлены")
 
     def reset_selection(self):
-        self.top_columns = []
-        self.bottom_columns = []
-        self.lbl_top_selected.config(text="не выбрано")
-        self.lbl_bottom_selected.config(text="не выбрано")
-        if self.df_full is not None:
+        if self.df_full is None:
+            self.top_columns = []
+            self.bottom_columns = []
+            self.lbl_top_selected.config(text="не выбрано")
+            self.lbl_bottom_selected.config(text="не выбрано")
+            self.status_var.set("Выбор сброшен.")
+            return
+
+        if self.default_top_columns or self.default_bottom_columns:
+            self.top_columns = list(self.default_top_columns)
+            self.bottom_columns = list(self.default_bottom_columns)
+            self.lbl_top_selected.config(
+                text=", ".join(self.top_columns) if self.top_columns else "не выбрано")
+            self.lbl_bottom_selected.config(
+                text=", ".join(self.bottom_columns) if self.bottom_columns else "не выбрано")
+
+            self.plot_manager.set_data(
+                self.df_full,
+                self.time_col,
+                self.top_columns,
+                self.bottom_columns,
+                show_corridor=self.show_corridor_var.get() and (self.algorithm.get() == "default")
+            )
+            self.plot_manager.show_plots()
+            self.status_var.set("Графики возвращены к исходному виду")
+        else:
+            self.top_columns = []
+            self.bottom_columns = []
+            self.lbl_top_selected.config(text="не выбрано")
+            self.lbl_bottom_selected.config(text="не выбрано")
             self.status_var.set(
                 "Выбор сброшен. Нажмите 'Выполнить расчёт' или выберите столбцы вручную.")
-        else:
-            self.status_var.set("Выбор сброшен.")
 
     # ---- Параметры алгоритмов ----
     def clear_params(self):
@@ -778,8 +863,8 @@ class SpeedAnalyzerApp:
         spin_o.pack(side=tk.LEFT, padx=2)
         lbl_info = tk.Label(
             self.params_container,
-            text="(окно нечётное, > степени) — аппроксимация полиномом заданной "
-                 "степени внутри окна; хорошо сохраняет форму кривой",
+            text="(окно нечётное, > степени) — фильтр Савицкого–Голея: аппроксимация "
+                 "полиномом заданной степени внутри окна; хорошо сохраняет форму кривой",
             font=('Arial', 8), fg='gray')
         lbl_info.pack(side=tk.LEFT, padx=5)
 
@@ -795,7 +880,6 @@ class SpeedAnalyzerApp:
             self.show_median_params()
         elif algo == "savgol":
             self.show_savgol_params()
-        # Спрятать/показать чекбокс «Показать коридор»
         self._update_corridor_checkbox_visibility()
 
 
