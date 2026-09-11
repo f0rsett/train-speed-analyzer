@@ -50,7 +50,7 @@ pip install -r requirements.txt
 ### 3. Запустить приложение
 
 ```bash
-python train_speed_processor.py
+python train_speed_analyzer.py
 ```
 ---
 
