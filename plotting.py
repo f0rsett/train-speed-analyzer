@@ -5,7 +5,7 @@ import tkinter as tk
 import pandas as pd
 
 UNITS = {
-    'скорость': 'км/ч',
+    'Скорость': 'км/ч',
     'Сглаженная скорость': 'км/ч',
     'Скорость в м/с': 'м/с',
     'Ускорение': 'м/с²',
@@ -15,12 +15,8 @@ UNITS = {
     'ТЦ': 'кгс/см²',
     'ТМ': 'кгс/см²',
     'ГР': 'кгс/см²',
-    'тяга': 'кН',
-    'тормоз': 'кН',
-    'Нижняя граница скорости': 'км/ч',
-    'Верхняя граница скорости': 'км/ч',
-    'Нижняя граница ускорения': 'м/с²',
-    'Верхняя граница ускорения': 'м/с²',
+    'Тяга': 'кН',
+    'Тормоз': 'кН',
 }
 
 EXCLUDED_COLUMNS = {
@@ -29,6 +25,11 @@ EXCLUDED_COLUMNS = {
     'KLUB_PUR',
     'Af_sr[1]',
     'Freal',
+    # Границы коридоров — рисуются как заливка, но в списках не нужны
+    'Нижняя граница скорости',
+    'Верхняя граница скорости',
+    'Нижняя граница ускорения',
+    'Верхняя граница ускорения',
 }
 
 
@@ -36,7 +37,6 @@ class QuietToolbar(NavigationToolbar2Tk):
     """Тулбар matplotlib без вывода координат x/y в правом углу."""
 
     def set_message(self, s):
-        # Намеренно ничего не делаем — координаты не отображаются.
         pass
 
 
@@ -239,7 +239,6 @@ class PlotManager:
 
         self._add_interactivity(canvas, ax1, ax2)
 
-        # --- Используем QuietToolbar вместо NavigationToolbar2Tk ---
         if self.toolbar_frame is not None:
             toolbar = QuietToolbar(canvas, self.toolbar_frame)
             self.toolbar = toolbar
