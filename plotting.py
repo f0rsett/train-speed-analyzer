@@ -9,6 +9,7 @@ UNITS = {
     'Сглаженная скорость (км/ч)': 'км/ч',
     'Скорость в м/с': 'м/с',
     'Ускорение (м/с²)': 'м/с²',
+    'Ускорение сглаженное (м/с²)': 'м/с²',
     'Скорость в коридоре (км/ч)': 'км/ч',
     'Уклон': '‰',
     'ТЦ': 'кгс/см²',
@@ -16,7 +17,12 @@ UNITS = {
     'ГР': 'кгс/см²',
     'тяга': 'кН',
     'тормоз': 'кН',
+    'Нижняя граница (км/ч)': 'км/ч',
+    'Верхняя граница (км/ч)': 'км/ч',
+    'Нижняя граница ускорения (м/с²)': 'м/с²',
+    'Верхняя граница ускорения (м/с²)': 'м/с²',
 }
+
 
 class PlotManager:
     def __init__(self, figure_frame):
@@ -25,48 +31,49 @@ class PlotManager:
         self.time_col = None
         self.top_columns = []
         self.bottom_columns = []
-        
+        self.show_corridor = False
+
         self.canvas = None
         self.fig = None
         self.ax1 = None
         self.ax2 = None
-        
+
         self.vline1 = None
         self.vline2 = None
-        
+
         self.rects = []
         self.press_x = None
         self.is_dragging = False
-        
+
         self.cid_motion_hover = None
         self.cid_leave = None
         self.cid_press = None
         self.cid_release = None
         self.cid_motion_drag = None
-        
+
         self.status_callback = None
         self.hover_callback = None
         self.selection_callback = None
 
-        # ---- Режим выделения ----
         self.selection_mode = False
         self.toolbar = None
 
-    def set_data(self, df, time_col, top_columns, bottom_columns):
+    def set_data(self, df, time_col, top_columns, bottom_columns, show_corridor=False):
         self.df = df
         self.time_col = time_col
         self.top_columns = top_columns
         self.bottom_columns = bottom_columns
-    
+        self.show_corridor = show_corridor
+
     def set_status_callback(self, callback):
         self.status_callback = callback
-    
+
     def set_hover_callback(self, callback):
         self.hover_callback = callback
-    
+
     def set_selection_callback(self, callback):
         self.selection_callback = callback
-    
+
     def get_unit(self, column):
         return UNITS.get(column, "")
 
@@ -82,16 +89,17 @@ class PlotManager:
             return
         if not self.top_columns and not self.bottom_columns:
             return
-        
+
         for widget in self.figure_frame.winfo_children():
             widget.destroy()
-        
+
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 6))
-        
+
         time = self.df[self.time_col].values
         colors = plt.cm.tab10(np.linspace(0, 1, 10))
         color_idx = 0
-        
+
+        # ---- Верхний график (скорость) ----
         for col in self.top_columns:
             if col not in self.df.columns:
                 continue
@@ -99,15 +107,31 @@ class PlotManager:
             label = col
             if col in UNITS:
                 label = f"{col} ({UNITS[col]})"
-            ax1.plot(time, y, label=label, color=colors[color_idx % len(colors)], linewidth=1.5)
+            ax1.plot(time, y, label=label,
+                     color=colors[color_idx % len(colors)], linewidth=1.5)
             color_idx += 1
-        
+
+        # ---- Коридор скорости ----
+        if self.show_corridor:
+            low_col = 'Нижняя граница (км/ч)'
+            high_col = 'Верхняя граница (км/ч)'
+            if low_col in self.df.columns and high_col in self.df.columns:
+                low = self.df[low_col].values
+                high = self.df[high_col].values
+                ax1.fill_between(time, low, high, alpha=0.2, color='gray',
+                                 label='Коридор скорости')
+                ax1.plot(time, low, '--', color='gray', linewidth=1, alpha=0.7)
+                ax1.plot(time, high, '--', color='gray', linewidth=1, alpha=0.7)
+
         ax1.set_ylabel('Значение')
-        ax1.set_title('Верхний график')
-        ax1.legend(loc='best')
+        ax1.set_title('Верхний график (скорость)')
+        handles, labels = ax1.get_legend_handles_labels()
+        if handles:
+            ax1.legend(loc='best')
         ax1.grid(True, alpha=0.3)
         ax1.set_xlim(time.min(), time.max())
-        
+
+        # ---- Нижний график (ускорение) ----
         color_idx = 0
         for col in self.bottom_columns:
             if col not in self.df.columns:
@@ -116,16 +140,32 @@ class PlotManager:
             label = col
             if col in UNITS:
                 label = f"{col} ({UNITS[col]})"
-            ax2.plot(time, y, label=label, color=colors[color_idx % len(colors)], linewidth=1.5)
+            ax2.plot(time, y, label=label,
+                     color=colors[color_idx % len(colors)], linewidth=1.5)
             color_idx += 1
-        
+
+        # ---- Коридор ускорения ----
+        if self.show_corridor:
+            low_col = 'Нижняя граница ускорения (м/с²)'
+            high_col = 'Верхняя граница ускорения (м/с²)'
+            if low_col in self.df.columns and high_col in self.df.columns:
+                low = self.df[low_col].values
+                high = self.df[high_col].values
+                ax2.fill_between(time, low, high, alpha=0.2, color='gray',
+                                 label='Коридор ускорения')
+                ax2.plot(time, low, '--', color='gray', linewidth=1, alpha=0.7)
+                ax2.plot(time, high, '--', color='gray', linewidth=1, alpha=0.7)
+
         ax2.set_ylabel('Значение')
         ax2.set_xlabel('Время')
-        ax2.set_title('Нижний график')
-        ax2.legend(loc='best')
+        ax2.set_title('Нижний график (ускорение)')
+        handles, labels = ax2.get_legend_handles_labels()
+        if handles:
+            ax2.legend(loc='best')
         ax2.grid(True, alpha=0.3)
         ax2.set_xlim(time.min(), time.max())
-        
+
+        # ---- Автоматическая настройка Y-границ ----
         for ax in (ax1, ax2):
             if ax.lines:
                 y_min = np.inf
@@ -133,68 +173,75 @@ class PlotManager:
                 for line in ax.lines:
                     ydata = line.get_ydata()
                     if len(ydata) > 0:
-                        y_min = min(y_min, np.nanmin(ydata))
-                        y_max = max(y_max, np.nanmax(ydata))
+                        finite = ydata[np.isfinite(ydata)]
+                        if len(finite) > 0:
+                            y_min = min(y_min, np.nanmin(finite))
+                            y_max = max(y_max, np.nanmax(finite))
+                for collection in ax.collections:
+                    if isinstance(collection, plt.matplotlib.collections.PolyCollection):
+                        for path in collection.get_paths():
+                            verts = path.vertices
+                            if len(verts) > 0:
+                                y_vals = verts[:, 1]
+                                finite = y_vals[np.isfinite(y_vals)]
+                                if len(finite) > 0:
+                                    y_min = min(y_min, np.nanmin(finite))
+                                    y_max = max(y_max, np.nanmax(finite))
                 if np.isfinite(y_min) and np.isfinite(y_max):
                     y_range = y_max - y_min
                     if y_range > 0:
                         ax.set_ylim(y_min - y_range * 0.1, y_max + y_range * 0.1)
-        
+
         plt.tight_layout()
-        
+
         canvas = FigureCanvasTkAgg(fig, master=self.figure_frame)
         canvas.draw()
-        
+
         self.canvas = canvas
         self.fig = fig
         self.ax1 = ax1
         self.ax2 = ax2
-        
+
         self._add_interactivity(canvas, ax1, ax2)
-        
+
         toolbar = NavigationToolbar2Tk(canvas, self.figure_frame)
         self.toolbar = toolbar
         toolbar.update()
-        
+
         canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
-    
+
     def _add_interactivity(self, canvas, ax1, ax2):
-        self.vline1 = ax1.axvline(x=0, color='#FF6B6B', linestyle='--', 
+        self.vline1 = ax1.axvline(x=0, color='#FF6B6B', linestyle='--',
                                   linewidth=2, alpha=0.8, visible=False)
-        self.vline2 = ax2.axvline(x=0, color='#FF6B6B', linestyle='--', 
+        self.vline2 = ax2.axvline(x=0, color='#FF6B6B', linestyle='--',
                                   linewidth=2, alpha=0.8, visible=False)
-        
+
         self.cid_motion_hover = canvas.mpl_connect('motion_notify_event', self.on_mouse_move)
         self.cid_leave = canvas.mpl_connect('axes_leave_event', self.on_mouse_leave)
         self.cid_press = canvas.mpl_connect('button_press_event', self.on_press)
         self.cid_release = canvas.mpl_connect('button_release_event', self.on_release)
         self.cid_motion_drag = canvas.mpl_connect('motion_notify_event', self.on_motion)
-    
+
     def on_mouse_move(self, event):
         if event.inaxes is None or self.df is None:
             return
-        
         x = event.xdata
         if x is None:
             return
-        
         time = self.df[self.time_col].values
         if x < time.min() or x > time.max():
             self.vline1.set_visible(False)
             self.vline2.set_visible(False)
             self.canvas.draw_idle()
             return
-        
         self.vline1.set_xdata([x, x])
         self.vline1.set_visible(True)
         self.vline2.set_xdata([x, x])
         self.vline2.set_visible(True)
-        
         idx = np.argmin(np.abs(time - x))
         if idx >= len(time):
             return
         time_val = time[idx]
-        
         data_dict = {}
         for col in self.df.columns:
             if col == self.time_col:
@@ -204,35 +251,30 @@ class PlotManager:
                     val = self.df[col].iloc[idx]
                     if np.isfinite(val):
                         data_dict[col] = val
-        
         if self.hover_callback:
             self.hover_callback(time_val, data_dict)
-        
         if self.status_callback:
             self.status_callback(f"t={time_val:.2f} с")
-        
         self.canvas.draw_idle()
-    
+
     def on_mouse_leave(self, event):
         self.vline1.set_visible(False)
         self.vline2.set_visible(False)
         self.canvas.draw_idle()
-        
         if self.hover_callback:
             self.hover_callback(None, {})
         if self.status_callback:
             self.status_callback("Готов к работе")
-    
+
     def on_press(self, event):
         if not self.selection_mode:
             return
-        # Убираем проверку на toolbar, чтобы выделение работало всегда
         if event.inaxes is None:
             return
         self.press_x = event.xdata
         self.is_dragging = True
         self._clear_rects()
-    
+
     def _clear_rects(self):
         for rect in self.rects:
             try:
@@ -242,23 +284,20 @@ class PlotManager:
         self.rects.clear()
         if self.canvas:
             self.canvas.draw_idle()
-    
+
     def on_motion(self, event):
         if not self.selection_mode:
             return
         if not self.is_dragging or event.inaxes is None:
             return
-        # Удаляем старые области
         self._clear_rects()
         x1 = self.press_x
         x2 = event.xdata
-        # Рисуем новые области на обоих осях
         r1 = self.ax1.axvspan(x1, x2, alpha=0.3, color='yellow')
         r2 = self.ax2.axvspan(x1, x2, alpha=0.3, color='yellow')
         self.rects = [r1, r2]
-        # Принудительно перерисовываем
         self.canvas.draw()
-    
+
     def on_release(self, event):
         if not self.selection_mode:
             return
@@ -267,15 +306,12 @@ class PlotManager:
         self.is_dragging = False
         x1 = min(self.press_x, event.xdata)
         x2 = max(self.press_x, event.xdata)
-        
         if abs(x2 - x1) < 1e-6:
             return
-        
         time = self.df[self.time_col].values
         mask = (time >= x1) & (time <= x2)
         if not mask.any():
             return
-        
         stats = {}
         for col in self.df.columns:
             if col == self.time_col:
@@ -285,22 +321,25 @@ class PlotManager:
                 vals = vals[~np.isnan(vals)]
                 if len(vals) > 0:
                     stats[col] = (np.mean(vals), np.min(vals), np.max(vals), np.std(vals))
-        
         if self.selection_callback and stats:
             self.selection_callback(x1, x2, stats)
-        
         if self.status_callback:
             first_col = next(iter(stats)) if stats else None
             if first_col:
                 mean_val = stats[first_col][0]
-                self.status_callback(f"Выделена область: {x1:.2f} - {x2:.2f} с, среднее {first_col} = {mean_val:.3f}")
+                self.status_callback(
+                    f"Выделена область: {x1:.2f} - {x2:.2f} с, "
+                    f"среднее {first_col} = {mean_val:.3f}"
+                )
             else:
-                self.status_callback(f"Выделена область: {x1:.2f} - {x2:.2f} с (нет числовых данных)")
-    
+                self.status_callback(
+                    f"Выделена область: {x1:.2f} - {x2:.2f} с (нет числовых данных)"
+                )
+
     def clear_selection(self):
         self._clear_rects()
         if self.selection_callback:
             self.selection_callback(None, None, None)
-    
+
     def update(self):
         self.show_plots()
