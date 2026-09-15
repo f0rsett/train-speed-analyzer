@@ -25,11 +25,39 @@ EXCLUDED_COLUMNS = {
     'KLUB_PUR',
     'Af_sr[1]',
     'Freal',
-    # Границы коридоров — рисуются как заливка, но в списках не нужны
     'Нижняя граница скорости',
     'Верхняя граница скорости',
     'Нижняя граница ускорения',
     'Верхняя граница ускорения',
+}
+
+COLORS = {
+    'Скорость':               '#1f77b4',
+    'Сглаженная скорость':    '#17becf',
+    'Скорость в м/с':         '#9467bd',
+    'Скорость в коридоре':    '#8c564b',
+    'Ускорение':              '#ff7f0e',
+    'Ускорение сглаженное':   '#e377c2',
+    'Уклон':                  '#7f7f7f',
+    'ТЦ':                     '#bcbd22',
+    'ТМ':                     '#d62728',
+    'ГР':                     '#1f77b4',
+    'Тяга':                   '#2ca02c',
+    'Тормоз':                 '#d62728',
+}
+
+# Порядок отрисовки: чем больше — тем выше
+ZORDER = {
+    'Тяга':   6,
+    'Тормоз': 5,
+}
+
+# Столбцы, которые рисуем как гистограмму (bar) вместо линии
+HISTOGRAM_COLUMNS = {'Тяга', 'Тормоз'}
+
+# Столбцы, у которых значения меньше порога отображаются как 0
+THRESHOLD_ZERO = {
+    'ТЦ': 0.1,
 }
 
 
@@ -104,6 +132,76 @@ class PlotManager:
         if self.status_callback:
             self.status_callback(f"Режим выделения {'включен' if enabled else 'выключен'}")
 
+    @staticmethod
+    def _build_bar_segments(time, values):
+        """
+        Группирует подряд идущие одинаковые значения в интервалы.
+        Возвращает список кортежей (start_x, width, value).
+        """
+        segments = []
+        n = len(time)
+        if n == 0:
+            return segments
+
+        if n >= 2:
+            last_dt = time[-1] - time[-2]
+            if not np.isfinite(last_dt) or last_dt <= 0:
+                last_dt = 1.0
+        else:
+            last_dt = 1.0
+
+        i = 0
+        while i < n:
+            v = values[i]
+            if not np.isfinite(v):
+                i += 1
+                continue
+            j = i
+            while (j + 1 < n
+                   and np.isfinite(values[j + 1])
+                   and values[j + 1] == v):
+                j += 1
+
+            start = time[i]
+            if j + 1 < n:
+                end = time[j + 1]
+            else:
+                end = time[j] + last_dt
+
+            width = end - start
+            if width > 0:
+                segments.append((start, width, v))
+            i = j + 1
+
+        return segments
+
+    def _plot_column(self, ax, col, time, y, color, color_idx):
+        """Рисует столбец (линию или гистограмму) в заданных осях."""
+        label = col
+        unit = UNITS.get(col, "")
+        if unit:
+            label = f"{col} ({unit})"
+
+        z = ZORDER.get(col, 2)
+
+        # Порог: значения меньше порога рисуем как 0 (только для визуализации)
+        if col in THRESHOLD_ZERO:
+            threshold = THRESHOLD_ZERO[col]
+            y_plot = np.where(np.isfinite(y) & (y < threshold), 0.0, y)
+        else:
+            y_plot = y
+
+        if col in HISTOGRAM_COLUMNS:
+            segments = self._build_bar_segments(time, y_plot)
+            first = True
+            for (start, width, value) in segments:
+                ax.bar(start, value, width=width, align='edge',
+                       color=color, alpha=0.75, edgecolor='none',
+                       label=label if first else None, zorder=z)
+                first = False
+        else:
+            ax.plot(time, y_plot, label=label, color=color, linewidth=1.5, zorder=z)
+
     def show_plots(self):
         if self.df is None or self.time_col is None:
             return
@@ -127,19 +225,17 @@ class PlotManager:
 
         time = self.df[self.time_col].values
         colors = plt.cm.tab10(np.linspace(0, 1, 10))
-        color_idx = 0
 
+        # ---- Верхний график ----
+        color_idx = 0
         for col in self.top_columns:
             if col not in self.df.columns:
                 continue
             y = self.df[col].values
-            label = col
-            unit = UNITS.get(col, "")
-            if unit:
-                label = f"{col} ({unit})"
-            ax1.plot(time, y, label=label,
-                     color=colors[color_idx % len(colors)], linewidth=1.5)
-            color_idx += 1
+            color = COLORS.get(col, colors[color_idx % len(colors)])
+            if col not in COLORS:
+                color_idx += 1
+            self._plot_column(ax1, col, time, y, color, color_idx)
 
         if self.show_corridor:
             low_col = 'Нижняя граница скорости'
@@ -164,18 +260,16 @@ class PlotManager:
         ax1.grid(True, alpha=0.3)
         ax1.set_xlim(time.min(), time.max())
 
+        # ---- Нижний график ----
         color_idx = 0
         for col in self.bottom_columns:
             if col not in self.df.columns:
                 continue
             y = self.df[col].values
-            label = col
-            unit = UNITS.get(col, "")
-            if unit:
-                label = f"{col} ({unit})"
-            ax2.plot(time, y, label=label,
-                     color=colors[color_idx % len(colors)], linewidth=1.5)
-            color_idx += 1
+            color = COLORS.get(col, colors[color_idx % len(colors)])
+            if col not in COLORS:
+                color_idx += 1
+            self._plot_column(ax2, col, time, y, color, color_idx)
 
         if self.show_corridor:
             low_col = 'Нижняя граница ускорения'
@@ -201,31 +295,47 @@ class PlotManager:
         ax2.grid(True, alpha=0.3)
         ax2.set_xlim(time.min(), time.max())
 
+        # ---- Y-границы (учитываем линии, патчи и заливки) ----
         for ax in (ax1, ax2):
-            if ax.lines:
-                y_min = np.inf
-                y_max = -np.inf
-                for line in ax.lines:
-                    ydata = line.get_ydata()
-                    if len(ydata) > 0:
-                        finite = ydata[np.isfinite(ydata)]
-                        if len(finite) > 0:
-                            y_min = min(y_min, np.nanmin(finite))
-                            y_max = max(y_max, np.nanmax(finite))
-                for collection in ax.collections:
-                    if isinstance(collection, plt.matplotlib.collections.PolyCollection):
-                        for path in collection.get_paths():
-                            verts = path.vertices
-                            if len(verts) > 0:
-                                y_vals = verts[:, 1]
-                                finite = y_vals[np.isfinite(y_vals)]
-                                if len(finite) > 0:
-                                    y_min = min(y_min, np.nanmin(finite))
-                                    y_max = max(y_max, np.nanmax(finite))
-                if np.isfinite(y_min) and np.isfinite(y_max):
-                    y_range = y_max - y_min
-                    if y_range > 0:
-                        ax.set_ylim(y_min - y_range * 0.1, y_max + y_range * 0.1)
+            y_min = np.inf
+            y_max = -np.inf
+
+            for line in ax.lines:
+                ydata = line.get_ydata()
+                if len(ydata) > 0:
+                    finite = ydata[np.isfinite(ydata)]
+                    if len(finite) > 0:
+                        y_min = min(y_min, np.nanmin(finite))
+                        y_max = max(y_max, np.nanmax(finite))
+
+            for patch in ax.patches:
+                try:
+                    y0 = patch.get_y()
+                    h = patch.get_height()
+                    y_lo = min(y0, y0 + h)
+                    y_hi = max(y0, y0 + h)
+                    if np.isfinite(y_lo):
+                        y_min = min(y_min, y_lo)
+                    if np.isfinite(y_hi):
+                        y_max = max(y_max, y_hi)
+                except Exception:
+                    pass
+
+            for collection in ax.collections:
+                if isinstance(collection, plt.matplotlib.collections.PolyCollection):
+                    for path in collection.get_paths():
+                        verts = path.vertices
+                        if len(verts) > 0:
+                            y_vals = verts[:, 1]
+                            finite = y_vals[np.isfinite(y_vals)]
+                            if len(finite) > 0:
+                                y_min = min(y_min, np.nanmin(finite))
+                                y_max = max(y_max, np.nanmax(finite))
+
+            if np.isfinite(y_min) and np.isfinite(y_max):
+                y_range = y_max - y_min
+                if y_range > 0:
+                    ax.set_ylim(y_min - y_range * 0.1, y_max + y_range * 0.1)
 
         plt.tight_layout()
 

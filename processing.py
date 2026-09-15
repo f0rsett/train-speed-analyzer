@@ -3,53 +3,15 @@ from scipy.signal import savgol_filter
 
 
 class SpeedProcessor:
-    """Класс для обработки данных скорости и ускорения"""
+    """Класс для обработки данных скорости и ускорения.
+
+    Все параметры сглаживания передаются явно в методы.
+    """
 
     def __init__(self):
-        self.corridor_percent_speed = 0.1
-        self.corridor_percent_accel = 0.1
-
-        self.window_trunc_mean = 11
-        self.window_final_mean = 21
-
-        self.alpha_exp = 0.3
-        self.kalman_q = 0.01
-        self.kalman_r = 0.1
-        self.median_window = 5
-        self.savgol_window = 11
-        self.savgol_order = 3
-
         self.last_after_restriction = None
         self.low_bound = None
         self.high_bound = None
-
-    def set_params(self,
-                   corridor_percent_speed=None,
-                   corridor_percent_accel=None,
-                   window_trunc_mean=None,
-                   window_final_mean=None,
-                   alpha_exp=None, kalman_q=None, kalman_r=None,
-                   median_window=None, savgol_window=None, savgol_order=None):
-        if corridor_percent_speed is not None:
-            self.corridor_percent_speed = corridor_percent_speed
-        if corridor_percent_accel is not None:
-            self.corridor_percent_accel = corridor_percent_accel
-        if window_trunc_mean is not None:
-            self.window_trunc_mean = window_trunc_mean
-        if window_final_mean is not None:
-            self.window_final_mean = window_final_mean
-        if alpha_exp is not None:
-            self.alpha_exp = alpha_exp
-        if kalman_q is not None:
-            self.kalman_q = kalman_q
-        if kalman_r is not None:
-            self.kalman_r = kalman_r
-        if median_window is not None:
-            self.median_window = median_window
-        if savgol_window is not None:
-            self.savgol_window = savgol_window
-        if savgol_order is not None:
-            self.savgol_order = savgol_order
 
     @staticmethod
     def _normalize_window(window, n, min_window=3):
@@ -63,16 +25,23 @@ class SpeedProcessor:
             return None
         return w
 
-    def smooth_default(self, V, n, corridor_percent=None):
-        if corridor_percent is None:
-            corridor_percent = self.corridor_percent_speed
-
+    def smooth_default(self, V, n,
+                       corridor_percent=0.1,
+                       window_trunc=11,
+                       window_final=21):
+        """
+        Стандартный алгоритм:
+            1. Усечённое скользящее среднее (окно window_trunc)
+            2. Построение границ коридора: tmean ± |tmean| * percent/100
+            3. Ограничение исходных значений внутри коридора
+            4. Скользящее среднее (окно window_final)
+        """
         truncated_mean = np.full(n, np.nan)
         after_restriction = np.full(n, np.nan)
         smoothed = np.full(n, np.nan)
 
-        w1 = self._normalize_window(self.window_trunc_mean, n, min_window=3)
-        w2 = self._normalize_window(self.window_final_mean, n, min_window=3)
+        w1 = self._normalize_window(window_trunc, n, min_window=3)
+        w2 = self._normalize_window(window_final, n, min_window=3)
 
         # 1. Усечённое скользящее среднее
         if w1 is not None:
@@ -114,12 +83,8 @@ class SpeedProcessor:
         self.last_after_restriction = after_restriction
         return smoothed
 
-    def smooth_exponential(self, V, n):
-        """Экспоненциальное сглаживание. Стартует с первого не-NaN значения."""
-        alpha = self.alpha_exp
+    def smooth_exponential(self, V, n, alpha=0.3):
         smoothed = np.full(n, np.nan)
-
-        # Ищем первое не-NaN значение
         first_valid = None
         for i in range(n):
             if not np.isnan(V[i]):
@@ -136,12 +101,8 @@ class SpeedProcessor:
                 smoothed[i] = smoothed[i - 1]
         return smoothed
 
-    def smooth_kalman(self, V, n):
-        """Фильтр Калмана. Стартует с первого не-NaN значения."""
+    def smooth_kalman(self, V, n, q=0.01, r=0.1):
         smoothed = np.full(n, np.nan)
-        q = self.kalman_q
-        r = self.kalman_r
-
         first_valid = None
         for i in range(n):
             if not np.isnan(V[i]):
@@ -166,43 +127,23 @@ class SpeedProcessor:
                 smoothed[i] = smoothed[i - 1]
         return smoothed
 
-    def smooth_median(self, V, n):
-        window_size = self.median_window
+    def smooth_median(self, V, n, window=5):
         smoothed = np.full(n, np.nan)
-        half = window_size // 2
+        w = self._normalize_window(window, n, min_window=3)
+        if w is None:
+            return smoothed
+        half = w // 2
         for i in range(half, n - half):
-            window = V[i - half: i + half + 1]
-            if not np.isnan(window).all():
-                smoothed[i] = np.nanmedian(window)
+            win = V[i - half: i + half + 1]
+            if not np.isnan(win).all():
+                smoothed[i] = np.nanmedian(win)
         return smoothed
 
-    def smooth_savgol(self, V, n):
-        window_size = self.savgol_window
-        order = self.savgol_order
+    def smooth_savgol(self, V, n, window=11, order=3):
         mask = ~np.isnan(V)
-        if np.sum(mask) < window_size:
+        if np.sum(mask) < window:
             return V
         x = np.arange(n)
         V_interp = np.interp(x, x[mask], V[mask])
-        smoothed = savgol_filter(V_interp, window_size, order)
+        smoothed = savgol_filter(V_interp, window, order)
         return smoothed
-
-    def process(self, V, time, algorithm="default"):
-        n = len(V)
-        if algorithm == "default":
-            smoothed = self.smooth_default(V, n)
-        elif algorithm == "exponential":
-            smoothed = self.smooth_exponential(V, n)
-        elif algorithm == "kalman":
-            smoothed = self.smooth_kalman(V, n)
-        elif algorithm == "median":
-            smoothed = self.smooth_median(V, n)
-        elif algorithm == "savgol":
-            smoothed = self.smooth_savgol(V, n)
-        else:
-            smoothed = self.smooth_default(V, n)
-
-        speed = smoothed / 3.6
-        from utils import calculate_acceleration
-        acceleration = calculate_acceleration(speed, time)
-        return smoothed, speed, acceleration

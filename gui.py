@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import filedialog, messagebox, StringVar, Text, Toplevel, Checkbutton, BooleanVar, Scrollbar, ttk
+from tkinter import filedialog, messagebox, StringVar, Text, Toplevel, BooleanVar, Scrollbar, ttk
 import pandas as pd
 import numpy as np
 import os
@@ -40,12 +40,11 @@ def _setup_styles(root):
 
     style.configure(".", font=FONT_BASE, background=BG, foreground=FG)
     style.configure("TFrame", background=BG)
-    style.configure("Card.TFrame", background=PANEL_BG,
-                    relief="flat", borderwidth=0)
+    style.configure("Card.TFrame", background=PANEL_BG)
     style.configure("TLabel", background=BG, foreground=FG, font=FONT_BASE)
     style.configure("Muted.TLabel", background=BG, foreground=FG_MUTED, font=FONT_SMALL)
     style.configure("Card.TLabel", background=PANEL_BG, foreground=FG)
-    style.configure("Title.TLabel", background=BG, foreground=FG, font=FONT_TITLE)
+    style.configure("CardBold.TLabel", background=PANEL_BG, foreground=FG, font=FONT_BOLD)
     style.configure("Section.TLabel", background=PANEL_BG, foreground=FG, font=FONT_BOLD)
 
     style.configure("TLabelframe", background=PANEL_BG,
@@ -201,18 +200,29 @@ class SpeedAnalyzerApp:
         self.selection_x1 = None
         self.selection_x2 = None
 
+        # ---- Параметры для СКОРОСТИ ----
         self.corridor_percent_speed = tk.DoubleVar(value=0.1)
+        self.window_trunc_speed = tk.IntVar(value=11)
+        self.window_final_speed = tk.IntVar(value=21)
+
+        self.alpha_exp_speed = tk.DoubleVar(value=0.3)
+        self.kalman_q_speed = tk.DoubleVar(value=0.01)
+        self.kalman_r_speed = tk.DoubleVar(value=0.1)
+        self.median_window_speed = tk.IntVar(value=5)
+        self.savgol_window_speed = tk.IntVar(value=11)
+        self.savgol_order_speed = tk.IntVar(value=3)
+
+        # ---- Параметры для УСКОРЕНИЯ ----
         self.corridor_percent_accel = tk.DoubleVar(value=0.1)
+        self.window_trunc_accel = tk.IntVar(value=11)
+        self.window_final_accel = tk.IntVar(value=21)
 
-        self.window_trunc_mean = tk.IntVar(value=11)
-        self.window_final_mean = tk.IntVar(value=21)
-
-        self.alpha_exp = tk.DoubleVar(value=0.3)
-        self.kalman_q = tk.DoubleVar(value=0.01)
-        self.kalman_r = tk.DoubleVar(value=0.1)
-        self.median_window = tk.IntVar(value=5)
-        self.savgol_window = tk.IntVar(value=11)
-        self.savgol_order = tk.IntVar(value=3)
+        self.alpha_exp_accel = tk.DoubleVar(value=0.3)
+        self.kalman_q_accel = tk.DoubleVar(value=0.01)
+        self.kalman_r_accel = tk.DoubleVar(value=0.1)
+        self.median_window_accel = tk.IntVar(value=5)
+        self.savgol_window_accel = tk.IntVar(value=11)
+        self.savgol_order_accel = tk.IntVar(value=3)
 
         self.algorithm = tk.StringVar(value="default")
 
@@ -271,7 +281,7 @@ class SpeedAnalyzerApp:
             algo_card,
             values=list(self.algorithm_display.keys()),
             state='readonly',
-            width=32,
+            width=30,
             font=FONT_BASE
         )
         self.cb_algo.set(self.algorithm_reverse[self.algorithm.get()])
@@ -394,7 +404,6 @@ class SpeedAnalyzerApp:
 
         self._separator(self.control_panel)
 
-        # ===== Значения в точке (Label) =====
         sec_hover = self._card_section(self.control_panel, "Значения в точке")
         sec_hover.pack(fill='x', padx=8, pady=(0, 6))
 
@@ -412,7 +421,6 @@ class SpeedAnalyzerApp:
 
         self._separator(self.control_panel)
 
-        # ===== Статистика выделенной области =====
         stat_header = ttk.Frame(self.control_panel, style="Card.TFrame",
                                 padding=(14, 0, 14, 4))
         stat_header.pack(fill='x')
@@ -450,6 +458,7 @@ class SpeedAnalyzerApp:
         selection_frame.grid_rowconfigure(0, weight=1)
         selection_frame.grid_columnconfigure(0, weight=1)
 
+    # ------------------------------------------------------------------
     def on_algorithm_selected(self, event=None):
         display = self.cb_algo.get()
         code = self.algorithm_display.get(display, "default")
@@ -512,8 +521,7 @@ class SpeedAnalyzerApp:
             return
         if self.selection_x1 is None or self.selection_x2 is None:
             messagebox.showinfo("Информация",
-                                "Сначала выделите область на графике "
-                                "(включите «Режим выделения» и протяните мышью).")
+                                "Сначала выделите область на графике.")
             return
 
         x1, x2 = self.selection_x1, self.selection_x2
@@ -525,7 +533,6 @@ class SpeedAnalyzerApp:
             return
 
         export_df = self.df_full.loc[mask].copy()
-
         default_name = f"selection_{x1:.2f}_{x2:.2f}.xlsx"
         filename = filedialog.asksaveasfilename(
             title="Сохранить выделенную область в Excel",
@@ -540,11 +547,10 @@ class SpeedAnalyzerApp:
             export_df.to_excel(filename, index=False)
             self.status_var.set(
                 f"Сохранено {len(export_df)} строк в {os.path.basename(filename)}")
-            messagebox.showinfo(
-                "Успех",
-                f"Данные выделенной области сохранены:\n{filename}\n\n"
-                f"Строк: {len(export_df)}\n"
-                f"Столбцов: {len(export_df.columns)}")
+            messagebox.showinfo("Успех",
+                                f"Данные сохранены:\n{filename}\n\n"
+                                f"Строк: {len(export_df)}\n"
+                                f"Столбцов: {len(export_df.columns)}")
         except Exception as e:
             messagebox.showerror("Ошибка", f"Не удалось сохранить файл:\n{str(e)}")
 
@@ -630,6 +636,39 @@ class SpeedAnalyzerApp:
         else:
             self.status_var.set("Файл не выбран")
 
+    # ------------------------------------------------------------------
+    # Расчёт
+    # ------------------------------------------------------------------
+    def _smooth(self, values, algorithm, params):
+        """
+        Применяет выбранный алгоритм с заданными параметрами.
+        params — словарь параметров для конкретной цели (speed / accel).
+        """
+        n = len(values)
+        if algorithm == "default":
+            return self.processor.smooth_default(
+                values, n,
+                corridor_percent=params['corridor'],
+                window_trunc=params['window_trunc'],
+                window_final=params['window_final'],
+            )
+        elif algorithm == "exponential":
+            return self.processor.smooth_exponential(
+                values, n, alpha=params['alpha'])
+        elif algorithm == "kalman":
+            return self.processor.smooth_kalman(
+                values, n, q=params['q'], r=params['r'])
+        elif algorithm == "median":
+            return self.processor.smooth_median(
+                values, n, window=params['median_window'])
+        elif algorithm == "savgol":
+            return self.processor.smooth_savgol(
+                values, n,
+                window=params['savgol_window'],
+                order=params['savgol_order'])
+        else:
+            return self.processor.smooth_default(values, n)
+
     def calculate(self):
         if not self.file_path.get():
             messagebox.showerror("Ошибка", "Сначала выберите Excel-файл!")
@@ -676,19 +715,6 @@ class SpeedAnalyzerApp:
                 raise ValueError(
                     f"Слишком мало данных ({len(V)} строк). Нужно минимум 5.")
 
-            self.processor.set_params(
-                corridor_percent_speed=self.corridor_percent_speed.get(),
-                corridor_percent_accel=self.corridor_percent_accel.get(),
-                window_trunc_mean=self.window_trunc_mean.get(),
-                window_final_mean=self.window_final_mean.get(),
-                alpha_exp=self.alpha_exp.get(),
-                kalman_q=self.kalman_q.get(),
-                kalman_r=self.kalman_r.get(),
-                median_window=self.median_window.get(),
-                savgol_window=self.savgol_window.get(),
-                savgol_order=self.savgol_order.get()
-            )
-
             V_ms = V / 3.6
             accel_orig = calculate_acceleration(V_ms, time)
 
@@ -697,16 +723,38 @@ class SpeedAnalyzerApp:
             is_default = (self.algorithm.get() == "default")
             show_corridor = self.show_corridor_var.get() and is_default
 
+            # Собираем параметры для скорости
+            params_speed = {
+                'corridor':      self.corridor_percent_speed.get(),
+                'window_trunc':  self.window_trunc_speed.get(),
+                'window_final':  self.window_final_speed.get(),
+                'alpha':         self.alpha_exp_speed.get(),
+                'q':             self.kalman_q_speed.get(),
+                'r':             self.kalman_r_speed.get(),
+                'median_window': self.median_window_speed.get(),
+                'savgol_window': self.savgol_window_speed.get(),
+                'savgol_order':  self.savgol_order_speed.get(),
+            }
+            # Собираем параметры для ускорения
+            params_accel = {
+                'corridor':      self.corridor_percent_accel.get(),
+                'window_trunc':  self.window_trunc_accel.get(),
+                'window_final':  self.window_final_accel.get(),
+                'alpha':         self.alpha_exp_accel.get(),
+                'q':             self.kalman_q_accel.get(),
+                'r':             self.kalman_r_accel.get(),
+                'median_window': self.median_window_accel.get(),
+                'savgol_window': self.savgol_window_accel.get(),
+                'savgol_order':  self.savgol_order_accel.get(),
+            }
+
+            # ---- Сглаживание скорости ----
             if smooth_speed:
+                smoothed_speed = self._smooth(V, self.algorithm.get(), params_speed)
                 if is_default:
-                    smoothed_speed = self.processor.smooth_default(
-                        V, len(V),
-                        corridor_percent=self.corridor_percent_speed.get()
-                    )
                     low_speed = self.processor.low_bound.copy()
                     high_speed = self.processor.high_bound.copy()
                 else:
-                    smoothed_speed = self._apply_smoothing(V, len(V), self.algorithm.get())
                     low_speed = high_speed = None
 
                 smoothed_speed_ms = smoothed_speed / 3.6
@@ -724,17 +772,14 @@ class SpeedAnalyzerApp:
                 df['Ускорение'] = accel_orig
                 current_accel = accel_orig
 
+            # ---- Сглаживание ускорения ----
             if smooth_accel:
+                smoothed_accel = self._smooth(current_accel, self.algorithm.get(),
+                                              params_accel)
                 if is_default:
-                    smoothed_accel = self.processor.smooth_default(
-                        current_accel, len(current_accel),
-                        corridor_percent=self.corridor_percent_accel.get()
-                    )
                     low_accel = self.processor.low_bound.copy()
                     high_accel = self.processor.high_bound.copy()
                 else:
-                    smoothed_accel = self._apply_smoothing(
-                        current_accel, len(current_accel), self.algorithm.get())
                     low_accel = high_accel = None
 
                 df['Ускорение сглаженное'] = smoothed_accel
@@ -763,20 +808,6 @@ class SpeedAnalyzerApp:
         except Exception as e:
             self.status_var.set("Ошибка!")
             messagebox.showerror("Ошибка", f"Произошла ошибка:\n{str(e)}")
-
-    def _apply_smoothing(self, arr, n, algorithm):
-        if algorithm == "default":
-            return self.processor.smooth_default(arr, n)
-        elif algorithm == "exponential":
-            return self.processor.smooth_exponential(arr, n)
-        elif algorithm == "kalman":
-            return self.processor.smooth_kalman(arr, n)
-        elif algorithm == "median":
-            return self.processor.smooth_median(arr, n)
-        elif algorithm == "savgol":
-            return self.processor.smooth_savgol(arr, n)
-        else:
-            return self.processor.smooth_default(arr, n)
 
     def apply_changes(self):
         if self.df_full is None:
@@ -833,6 +864,9 @@ class SpeedAnalyzerApp:
             self.status_var.set(
                 "Выбор сброшен. Нажмите 'Выполнить расчёт' или выберите столбцы вручную.")
 
+    # ------------------------------------------------------------------
+    # Панель параметров: двухколоночная (Скорость | Ускорение)
+    # ------------------------------------------------------------------
     def clear_params(self):
         for widget in self.params_container.winfo_children():
             widget.destroy()
@@ -841,85 +875,159 @@ class SpeedAnalyzerApp:
         return ttk.Spinbox(parent, from_=from_, to=to, increment=increment,
                            width=width, textvariable=var, font=FONT_BASE)
 
+    def _header_row(self, grid):
+        ttk.Label(grid, text="СКОРОСТЬ", style="CardBold.TLabel").grid(
+            row=0, column=0, sticky='w', padx=(0, 30), pady=(0, 6))
+        ttk.Label(grid, text="УСКОРЕНИЕ", style="CardBold.TLabel").grid(
+            row=0, column=1, sticky='w', padx=0, pady=(0, 6))
+
     def show_default_params(self):
         self.clear_params()
 
-        row1 = ttk.Frame(self.params_container, style="Card.TFrame")
-        row1.pack(side=tk.TOP, fill='x', anchor='w')
+        grid = ttk.Frame(self.params_container, style="Card.TFrame")
+        grid.pack(fill='x')
+        self._header_row(grid)
 
-        ttk.Label(row1, text="Коридор скорости:", style="Card.TLabel").pack(side=tk.LEFT)
-        self._spinbox(row1, self.corridor_percent_speed,
-                      0.01, 10.0, 0.01, 6).pack(side=tk.LEFT, padx=6)
-        ttk.Label(row1, text="%", style="Card.TLabel").pack(side=tk.LEFT)
+        # --- Коридоры (строка 1) ---
+        fr_s = ttk.Frame(grid, style="Card.TFrame")
+        fr_s.grid(row=1, column=0, sticky='w', padx=(0, 30), pady=2)
+        ttk.Label(fr_s, text="Коридор:", style="Card.TLabel").pack(side=tk.LEFT)
+        self._spinbox(fr_s, self.corridor_percent_speed,
+                      0.01, 10.0, 0.01, 6).pack(side=tk.LEFT, padx=4)
+        ttk.Label(fr_s, text="%", style="Card.TLabel").pack(side=tk.LEFT)
 
-        ttk.Label(row1, text="     Коридор ускорения:", style="Card.TLabel").pack(side=tk.LEFT)
-        self._spinbox(row1, self.corridor_percent_accel,
-                      0.01, 10.0, 0.01, 6).pack(side=tk.LEFT, padx=6)
-        ttk.Label(row1, text="%", style="Card.TLabel").pack(side=tk.LEFT)
+        fr_a = ttk.Frame(grid, style="Card.TFrame")
+        fr_a.grid(row=1, column=1, sticky='w', pady=2)
+        ttk.Label(fr_a, text="Коридор:", style="Card.TLabel").pack(side=tk.LEFT)
+        self._spinbox(fr_a, self.corridor_percent_accel,
+                      0.01, 10.0, 0.01, 6).pack(side=tk.LEFT, padx=4)
+        ttk.Label(fr_a, text="%", style="Card.TLabel").pack(side=tk.LEFT)
 
-        row2 = ttk.Frame(self.params_container, style="Card.TFrame")
-        row2.pack(side=tk.TOP, fill='x', anchor='w', pady=(8, 0))
+        # --- Окно усечённого среднего (строка 2) ---
+        fr_s2 = ttk.Frame(grid, style="Card.TFrame")
+        fr_s2.grid(row=2, column=0, sticky='w', padx=(0, 30), pady=2)
+        ttk.Label(fr_s2, text="Окно усеч. среднего:", style="Card.TLabel").pack(side=tk.LEFT)
+        self._spinbox(fr_s2, self.window_trunc_speed,
+                      3, 101, 2, 5).pack(side=tk.LEFT, padx=4)
 
-        ttk.Label(row2, text="Окно усечённого среднего:",
-                  style="Card.TLabel").pack(side=tk.LEFT)
-        self._spinbox(row2, self.window_trunc_mean, 3, 101, 2, 5).pack(
-            side=tk.LEFT, padx=6)
-        ttk.Label(row2, text="(нечётное, ≥3) — отбрасываются макс. и мин., остальные усредняются",
-                  style="Muted.TLabel", background=PANEL_BG).pack(side=tk.LEFT, padx=(0, 15))
+        fr_a2 = ttk.Frame(grid, style="Card.TFrame")
+        fr_a2.grid(row=2, column=1, sticky='w', pady=2)
+        ttk.Label(fr_a2, text="Окно усеч. среднего:", style="Card.TLabel").pack(side=tk.LEFT)
+        self._spinbox(fr_a2, self.window_trunc_accel,
+                      3, 101, 2, 5).pack(side=tk.LEFT, padx=4)
 
-        ttk.Label(row2, text="Окно финального среднего:",
-                  style="Card.TLabel").pack(side=tk.LEFT)
-        self._spinbox(row2, self.window_final_mean, 3, 201, 2, 5).pack(
-            side=tk.LEFT, padx=6)
-        ttk.Label(row2, text="(нечётное, ≥3) — простое среднее всех точек в окне",
-                  style="Muted.TLabel", background=PANEL_BG).pack(side=tk.LEFT)
+        # --- Окно финального среднего (строка 3) ---
+        fr_s3 = ttk.Frame(grid, style="Card.TFrame")
+        fr_s3.grid(row=3, column=0, sticky='w', padx=(0, 30), pady=2)
+        ttk.Label(fr_s3, text="Окно финального среднего:", style="Card.TLabel").pack(side=tk.LEFT)
+        self._spinbox(fr_s3, self.window_final_speed,
+                      3, 201, 2, 5).pack(side=tk.LEFT, padx=4)
+
+        fr_a3 = ttk.Frame(grid, style="Card.TFrame")
+        fr_a3.grid(row=3, column=1, sticky='w', pady=2)
+        ttk.Label(fr_a3, text="Окно финального среднего:", style="Card.TLabel").pack(side=tk.LEFT)
+        self._spinbox(fr_a3, self.window_final_accel,
+                      3, 201, 2, 5).pack(side=tk.LEFT, padx=4)
 
     def show_exponential_params(self):
         self.clear_params()
-        ttk.Label(self.params_container, text="Alpha (α):", style="Card.TLabel").pack(side=tk.LEFT)
-        self._spinbox(self.params_container, self.alpha_exp,
-                      0.01, 1.0, 0.01, 6).pack(side=tk.LEFT, padx=6)
+        grid = ttk.Frame(self.params_container, style="Card.TFrame")
+        grid.pack(fill='x')
+        self._header_row(grid)
+
+        fr_s = ttk.Frame(grid, style="Card.TFrame")
+        fr_s.grid(row=1, column=0, sticky='w', padx=(0, 30), pady=2)
+        ttk.Label(fr_s, text="Alpha (α):", style="Card.TLabel").pack(side=tk.LEFT)
+        self._spinbox(fr_s, self.alpha_exp_speed,
+                      0.01, 1.0, 0.01, 6).pack(side=tk.LEFT, padx=4)
+
+        fr_a = ttk.Frame(grid, style="Card.TFrame")
+        fr_a.grid(row=1, column=1, sticky='w', pady=2)
+        ttk.Label(fr_a, text="Alpha (α):", style="Card.TLabel").pack(side=tk.LEFT)
+        self._spinbox(fr_a, self.alpha_exp_accel,
+                      0.01, 1.0, 0.01, 6).pack(side=tk.LEFT, padx=4)
+
         ttk.Label(self.params_container,
                   text="(0.01–1.0) — чем больше, тем сильнее доверяем новым значениям и слабее сглаживание",
-                  style="Muted.TLabel", background=PANEL_BG).pack(side=tk.LEFT, padx=6)
+                  style="Muted.TLabel", background=PANEL_BG).pack(anchor='w', pady=(6, 0))
 
     def show_kalman_params(self):
         self.clear_params()
-        ttk.Label(self.params_container, text="Q (шум процесса):",
-                  style="Card.TLabel").pack(side=tk.LEFT)
-        self._spinbox(self.params_container, self.kalman_q,
-                      0.0001, 1.0, 0.0001, 8).pack(side=tk.LEFT, padx=6)
-        ttk.Label(self.params_container, text="R (шум измерения):",
-                  style="Card.TLabel").pack(side=tk.LEFT, padx=(10, 0))
-        self._spinbox(self.params_container, self.kalman_r,
-                      0.0001, 1.0, 0.0001, 8).pack(side=tk.LEFT, padx=6)
+        grid = ttk.Frame(self.params_container, style="Card.TFrame")
+        grid.pack(fill='x')
+        self._header_row(grid)
+
+        fr_s = ttk.Frame(grid, style="Card.TFrame")
+        fr_s.grid(row=1, column=0, sticky='w', padx=(0, 30), pady=2)
+        ttk.Label(fr_s, text="Q:", style="Card.TLabel").pack(side=tk.LEFT)
+        self._spinbox(fr_s, self.kalman_q_speed,
+                      0.0001, 1.0, 0.0001, 8).pack(side=tk.LEFT, padx=4)
+        ttk.Label(fr_s, text="R:", style="Card.TLabel").pack(side=tk.LEFT, padx=(10, 0))
+        self._spinbox(fr_s, self.kalman_r_speed,
+                      0.0001, 1.0, 0.0001, 8).pack(side=tk.LEFT, padx=4)
+
+        fr_a = ttk.Frame(grid, style="Card.TFrame")
+        fr_a.grid(row=1, column=1, sticky='w', pady=2)
+        ttk.Label(fr_a, text="Q:", style="Card.TLabel").pack(side=tk.LEFT)
+        self._spinbox(fr_a, self.kalman_q_accel,
+                      0.0001, 1.0, 0.0001, 8).pack(side=tk.LEFT, padx=4)
+        ttk.Label(fr_a, text="R:", style="Card.TLabel").pack(side=tk.LEFT, padx=(10, 0))
+        self._spinbox(fr_a, self.kalman_r_accel,
+                      0.0001, 1.0, 0.0001, 8).pack(side=tk.LEFT, padx=4)
+
         ttk.Label(self.params_container,
-                  text="(Q — динамика системы; R — шум измерений. Меньше Q и больше R — сильнее сглаживание)",
-                  style="Muted.TLabel", background=PANEL_BG).pack(side=tk.LEFT, padx=6)
+                  text="Q — динамика системы, R — шум измерений. Меньше Q и больше R → сильнее сглаживание",
+                  style="Muted.TLabel", background=PANEL_BG).pack(anchor='w', pady=(6, 0))
 
     def show_median_params(self):
         self.clear_params()
-        ttk.Label(self.params_container, text="Размер окна:",
-                  style="Card.TLabel").pack(side=tk.LEFT)
-        self._spinbox(self.params_container, self.median_window,
-                      3, 21, 2, 6).pack(side=tk.LEFT, padx=6)
+        grid = ttk.Frame(self.params_container, style="Card.TFrame")
+        grid.pack(fill='x')
+        self._header_row(grid)
+
+        fr_s = ttk.Frame(grid, style="Card.TFrame")
+        fr_s.grid(row=1, column=0, sticky='w', padx=(0, 30), pady=2)
+        ttk.Label(fr_s, text="Размер окна:", style="Card.TLabel").pack(side=tk.LEFT)
+        self._spinbox(fr_s, self.median_window_speed,
+                      3, 21, 2, 6).pack(side=tk.LEFT, padx=4)
+
+        fr_a = ttk.Frame(grid, style="Card.TFrame")
+        fr_a.grid(row=1, column=1, sticky='w', pady=2)
+        ttk.Label(fr_a, text="Размер окна:", style="Card.TLabel").pack(side=tk.LEFT)
+        self._spinbox(fr_a, self.median_window_accel,
+                      3, 21, 2, 6).pack(side=tk.LEFT, padx=4)
+
         ttk.Label(self.params_container,
                   text="(нечётное, 3–21) — медиана точек окна; убирает одиночные выбросы",
-                  style="Muted.TLabel", background=PANEL_BG).pack(side=tk.LEFT, padx=6)
+                  style="Muted.TLabel", background=PANEL_BG).pack(anchor='w', pady=(6, 0))
 
     def show_savgol_params(self):
         self.clear_params()
-        ttk.Label(self.params_container, text="Размер окна:",
-                  style="Card.TLabel").pack(side=tk.LEFT)
-        self._spinbox(self.params_container, self.savgol_window,
-                      5, 31, 2, 6).pack(side=tk.LEFT, padx=6)
-        ttk.Label(self.params_container, text="Степень:",
-                  style="Card.TLabel").pack(side=tk.LEFT, padx=(10, 0))
-        self._spinbox(self.params_container, self.savgol_order,
-                      1, 5, 1, 4).pack(side=tk.LEFT, padx=6)
+        grid = ttk.Frame(self.params_container, style="Card.TFrame")
+        grid.pack(fill='x')
+        self._header_row(grid)
+
+        fr_s = ttk.Frame(grid, style="Card.TFrame")
+        fr_s.grid(row=1, column=0, sticky='w', padx=(0, 30), pady=2)
+        ttk.Label(fr_s, text="Окно:", style="Card.TLabel").pack(side=tk.LEFT)
+        self._spinbox(fr_s, self.savgol_window_speed,
+                      5, 31, 2, 6).pack(side=tk.LEFT, padx=4)
+        ttk.Label(fr_s, text="Степень:", style="Card.TLabel").pack(side=tk.LEFT, padx=(10, 0))
+        self._spinbox(fr_s, self.savgol_order_speed,
+                      1, 5, 1, 4).pack(side=tk.LEFT, padx=4)
+
+        fr_a = ttk.Frame(grid, style="Card.TFrame")
+        fr_a.grid(row=1, column=1, sticky='w', pady=2)
+        ttk.Label(fr_a, text="Окно:", style="Card.TLabel").pack(side=tk.LEFT)
+        self._spinbox(fr_a, self.savgol_window_accel,
+                      5, 31, 2, 6).pack(side=tk.LEFT, padx=4)
+        ttk.Label(fr_a, text="Степень:", style="Card.TLabel").pack(side=tk.LEFT, padx=(10, 0))
+        self._spinbox(fr_a, self.savgol_order_accel,
+                      1, 5, 1, 4).pack(side=tk.LEFT, padx=4)
+
         ttk.Label(self.params_container,
-                  text="(окно нечётное, > степени) — фильтр Савицкого–Голея: полиномиальная аппроксимация в окне",
-                  style="Muted.TLabel", background=PANEL_BG).pack(side=tk.LEFT, padx=6)
+                  text="(окно нечётное, > степени) — полиномиальная аппроксимация в окне; хорошо сохраняет форму кривой",
+                  style="Muted.TLabel", background=PANEL_BG).pack(anchor='w', pady=(6, 0))
 
     def on_algorithm_change(self, *args):
         algo = self.algorithm.get()
