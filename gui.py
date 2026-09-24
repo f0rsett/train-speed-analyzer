@@ -30,17 +30,39 @@ FONT_TITLE = ("Segoe UI", 14, "bold")
 FONT_SMALL = ("Segoe UI", 8)
 FONT_MONO  = ("Consolas", 9)
 
-# Имена псевдо-столбцов коридоров
+# ---- Физические константы ----
+TRAIN_MASS_T       = 7337.0
+INERTIAL_MASS_K    = 0.07
+INERTIAL_MASS_T    = TRAIN_MASS_T * INERTIAL_MASS_K
+TOTAL_MASS_KG      = (TRAIN_MASS_T + INERTIAL_MASS_T) * 1000.0
+
+FREAL_TO_N = 1000.0
+
+# ---- Константы для силы сопротивления движению ----
+AXLE_LOAD_T     = 24.78716216   # B10, вкладка «Данные», т
+RESISTANCE_COEF = 1.25          # N1, вкладка «Режим»
+
+FREAL_RAW_NAME = 'Freal'
+TRACTION_NAME  = 'Сила тяги'
+
 CORRIDOR_SPEED_NAME   = 'Коридор скорости'
 CORRIDOR_ACCEL_1_NAME = 'Коридор ускорения (1-е сглаж.)'
 CORRIDOR_ACCEL_2_NAME = 'Коридор ускорения (2-е сглаж.)'
 
-COL_ACCEL_RAW = 'Ускорение'
-COL_ACCEL_1   = 'Ускорение после 1-го сглаживания'
-COL_ACCEL_2   = 'Ускорение после 2-го сглаживания'
-COL_V_SMOOTH  = 'Сглаженная скорость'
-COL_V_MS      = 'Скорость в м/с'
-COL_JITTER    = 'Дребезг ускорения'
+COL_ACCEL_RAW        = 'Ускорение'
+COL_ACCEL_1          = 'Ускорение после 1-го сглаживания'
+COL_ACCEL_2          = 'Ускорение после 2-го сглаживания'
+COL_V_SMOOTH         = 'Сглаженная скорость'
+COL_V_MS             = 'Скорость в м/с'
+COL_JITTER           = 'Дребезг ускорения'
+COL_SLOPE_FORCE      = 'Сила от уклона'
+COL_SLOPE_ACCEL      = 'Ускорение от уклона'
+COL_TRACTION_ACCEL   = 'Ускорение от силы тяги'
+COL_TRACTION_PCT     = 'Процент силы тяги'
+COL_RESISTANCE_FORCE = 'Сила сопротивления движению'
+COL_RESISTANCE_ACCEL = 'Ускорение от силы сопротивления'
+COL_SUM_ACCEL        = 'Сумма ускорений'
+COL_K                = 'Коэффициент K'
 
 LOW_SPEED    = 'Нижняя граница скорости'
 HIGH_SPEED   = 'Верхняя граница скорости'
@@ -342,8 +364,8 @@ class SpeedAnalyzerApp:
         _setup_styles(self.root)
 
         self.file_path = tk.StringVar()
-        self.df_raw = None      # сырые данные из Excel, не трогаем
-        self.df_full = None     # результат обработки (то, что показываем)
+        self.df_raw = None
+        self.df_full = None
         self.time_col = None
         self.top_columns = []
         self.bottom_columns = []
@@ -356,7 +378,8 @@ class SpeedAnalyzerApp:
 
         self.processor = SpeedProcessor()
 
-        # Параметр дребезга: половина окна в секундах
+        self.max_traction_N = None
+
         self.jitter_window_var = tk.DoubleVar(value=5.0)
 
         self.create_widgets()
@@ -375,7 +398,6 @@ class SpeedAnalyzerApp:
         left_container = ttk.Frame(main_split)
         left_container.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        # ---- Верхняя карточка ----
         top_card = ttk.Frame(left_container, style="Card.TFrame", padding=12)
         top_card.pack(fill='x', pady=(0, 8))
 
@@ -390,7 +412,6 @@ class SpeedAnalyzerApp:
         ttk.Button(top_card, text="⚡  Выполнить расчёт",
                    command=self.calculate, style="Primary.TButton").pack(side=tk.RIGHT)
 
-        # ---- Панель обработки ----
         pipeline_frame = ttk.LabelFrame(left_container,
                                         text=" Обработка ", padding=8)
         pipeline_frame.pack(fill='x', pady=(0, 8))
@@ -413,26 +434,24 @@ class SpeedAnalyzerApp:
             enabled_default=False, algo_default="default")
         self.stage_accel2.pack(side=tk.LEFT, fill='x', expand=True, padx=(4, 0))
 
-        # ---- Строка параметров дребезга ----
-        jitter_row = ttk.Frame(pipeline_frame, style="Card.TFrame")
-        jitter_row.pack(fill='x', pady=(8, 0))
+        info_row = ttk.Frame(pipeline_frame, style="Card.TFrame")
+        info_row.pack(fill='x', pady=(8, 0))
 
-        ttk.Label(jitter_row, text="Дребезг ускорения — окно ±",
+        ttk.Label(info_row, text="Дребезг ускорения — окно ±",
                   style="Card.TLabel").pack(side=tk.LEFT)
-        ttk.Spinbox(jitter_row, from_=0.1, to=120.0, increment=0.5,
+        ttk.Spinbox(info_row, from_=0.1, to=120.0, increment=0.5,
                     width=6, textvariable=self.jitter_window_var,
                     font=FONT_BASE).pack(side=tk.LEFT, padx=4)
-        ttk.Label(jitter_row, text="с",
+        ttk.Label(info_row, text="с",
                   style="Card.TLabel").pack(side=tk.LEFT)
-        ttk.Label(jitter_row,
-                  text="   (max − min в окне вокруг каждой точки; считается от финального ускорения)",
-                  style="CardMuted.TLabel").pack(side=tk.LEFT, padx=(10, 0))
 
-        # ---- Область графиков ----
+        self.info_label = ttk.Label(info_row, text="", style="CardMuted.TLabel")
+        self.info_label.pack(side=tk.LEFT, padx=(16, 0))
+        self._update_info_label()
+
         self.figure_frame = ttk.Frame(left_container, style="Card.TFrame")
         self.figure_frame.pack(fill=tk.BOTH, expand=True)
 
-        # ---- Правая панель ----
         self.control_panel = ttk.Frame(main_split, style="Card.TFrame", width=400)
         self.control_panel.pack(side=tk.RIGHT, fill=tk.Y, padx=(12, 0))
         self.control_panel.pack_propagate(False)
@@ -576,6 +595,18 @@ class SpeedAnalyzerApp:
         selection_frame.grid_columnconfigure(0, weight=1)
 
     # ------------------------------------------------------------------
+    def _update_info_label(self):
+        m_text = (f"Масса поезда {TRAIN_MASS_T:.0f} т, "
+                  f"инерционная {INERTIAL_MASS_T:.1f} т "
+                  f"({INERTIAL_MASS_K:.2f} от массы), "
+                  f"сумма {TRAIN_MASS_T + INERTIAL_MASS_T:.1f} т")
+        if self.max_traction_N is not None:
+            f_text = (f"   |   |Freal| макс = {self.max_traction_N:.0f} Н "
+                      f"({self.max_traction_N / 1000:.1f} кН)")
+        else:
+            f_text = "   |   |Freal| макс: нет столбца"
+        self.info_label.config(text="   " + m_text + f_text)
+
     def toggle_selection_mode(self):
         enabled = self.selection_mode_var.get()
         self.plot_manager.set_selection_mode(enabled)
@@ -690,7 +721,6 @@ class SpeedAnalyzerApp:
 
     # ------------------------------------------------------------------
     def _available_columns(self):
-        """Столбцы для селектора в сгруппированном порядке."""
         hidden = {LOW_SPEED, HIGH_SPEED,
                   LOW_ACCEL_1, HIGH_ACCEL_1,
                   LOW_ACCEL_2, HIGH_ACCEL_2}
@@ -727,6 +757,16 @@ class SpeedAnalyzerApp:
             group_accel.append(CORRIDOR_ACCEL_1_NAME)
         if has_accel_2_corr:
             group_accel.append(CORRIDOR_ACCEL_2_NAME)
+        if COL_SLOPE_ACCEL in df_cols:
+            group_accel.append(COL_SLOPE_ACCEL)
+        if COL_TRACTION_ACCEL in df_cols:
+            group_accel.append(COL_TRACTION_ACCEL)
+        if COL_RESISTANCE_ACCEL in df_cols:
+            group_accel.append(COL_RESISTANCE_ACCEL)
+        if COL_SUM_ACCEL in df_cols:
+            group_accel.append(COL_SUM_ACCEL)
+        if COL_K in df_cols:
+            group_accel.append(COL_K)
         if COL_JITTER in df_cols:
             group_accel.append(COL_JITTER)
 
@@ -734,9 +774,12 @@ class SpeedAnalyzerApp:
         group_pressure = [c for c in ('ТЦ', 'ТМ', 'ГР') if c in df_cols]
 
         # ---- Группа 4: силы и уклон ----
-        group_force = [c for c in ('Тяга', 'Тормоз', 'Уклон') if c in df_cols]
+        group_force = [c for c in (TRACTION_NAME, COL_TRACTION_PCT,
+                                   'Тяга', 'Тормоз',
+                                   COL_RESISTANCE_FORCE,
+                                   COL_SLOPE_FORCE, 'Уклон')
+                       if c in df_cols]
 
-        # ---- Всё остальное в исходном порядке ----
         used = set(group_speed + group_accel + group_pressure + group_force)
         rest = [c for c in df_cols if c not in used]
 
@@ -752,7 +795,12 @@ class SpeedAnalyzerApp:
             messagebox.showwarning("Предупреждение", "Нет доступных столбцов.")
             return
 
-        useful = ['Уклон', 'ТЦ', 'ТМ', 'Скорость', 'ГР', 'Тяга', 'Тормоз',
+        useful = ['Уклон', COL_SLOPE_FORCE, COL_SLOPE_ACCEL,
+                  COL_TRACTION_ACCEL, COL_RESISTANCE_ACCEL,
+                  COL_RESISTANCE_FORCE, COL_SUM_ACCEL, COL_K,
+                  TRACTION_NAME, COL_TRACTION_PCT,
+                  'Тяга', 'Тормоз',
+                  'ТЦ', 'ТМ', 'ГР', 'Скорость',
                   COL_V_SMOOTH, COL_V_MS,
                   COL_ACCEL_RAW, COL_ACCEL_1, COL_ACCEL_2,
                   COL_JITTER,
@@ -790,12 +838,33 @@ class SpeedAnalyzerApp:
             self.status_var.set(f"Выбран файл: {os.path.basename(filename)}")
             try:
                 df_full = pd.read_excel(filename, header=0)
+
+                if FREAL_RAW_NAME in df_full.columns and \
+                        TRACTION_NAME not in df_full.columns:
+                    df_full = df_full.rename(
+                        columns={FREAL_RAW_NAME: TRACTION_NAME})
+                if TRACTION_NAME in df_full.columns:
+                    df_full[TRACTION_NAME] = (
+                        pd.to_numeric(df_full[TRACTION_NAME], errors='coerce')
+                        * FREAL_TO_N
+                    )
+
                 time_col, _ = find_columns(df_full)
                 if time_col is None:
                     time_col = df_full.columns[0]
                 self.time_col = time_col
                 self.df_raw = df_full.copy()
                 self.df_full = df_full.copy()
+
+                if TRACTION_NAME in df_full.columns:
+                    tr = pd.to_numeric(df_full[TRACTION_NAME], errors='coerce')
+                    if tr.notna().any():
+                        self.max_traction_N = float(tr.abs().max())
+                    else:
+                        self.max_traction_N = None
+                else:
+                    self.max_traction_N = None
+
                 self.top_columns = []
                 self.bottom_columns = []
                 self.default_top_columns = []
@@ -804,6 +873,7 @@ class SpeedAnalyzerApp:
                 self.selection_x2 = None
                 self.lbl_top_selected.config(text="не выбрано", fg=FG_MUTED)
                 self.lbl_bottom_selected.config(text="не выбрано", fg=FG_MUTED)
+                self._update_info_label()
                 self.status_var.set(
                     "Данные загружены. Нажмите 'Выполнить расчёт' для построения графиков.")
             except Exception as e:
@@ -845,6 +915,15 @@ class SpeedAnalyzerApp:
 
             if self.df_raw is None:
                 df_raw = pd.read_excel(self.file_path.get(), header=0)
+                if FREAL_RAW_NAME in df_raw.columns and \
+                        TRACTION_NAME not in df_raw.columns:
+                    df_raw = df_raw.rename(
+                        columns={FREAL_RAW_NAME: TRACTION_NAME})
+                if TRACTION_NAME in df_raw.columns:
+                    df_raw[TRACTION_NAME] = (
+                        pd.to_numeric(df_raw[TRACTION_NAME], errors='coerce')
+                        * FREAL_TO_N
+                    )
                 time_col, _ = find_columns(df_raw)
                 if time_col is None:
                     time_col = df_raw.columns[0]
@@ -861,6 +940,10 @@ class SpeedAnalyzerApp:
                 COL_V_SMOOTH, COL_V_MS,
                 COL_ACCEL_RAW, COL_ACCEL_1, COL_ACCEL_2,
                 COL_JITTER,
+                COL_SLOPE_FORCE, COL_SLOPE_ACCEL,
+                COL_TRACTION_ACCEL, COL_TRACTION_PCT,
+                COL_RESISTANCE_FORCE, COL_RESISTANCE_ACCEL,
+                COL_SUM_ACCEL, COL_K,
                 'Ускорение сглаженное',
             ]
             df = df.drop(columns=[c for c in drop_cols if c in df.columns])
@@ -879,6 +962,27 @@ class SpeedAnalyzerApp:
                 raise ValueError(
                     f"Слишком мало данных ({len(df)} строк). Нужно минимум 5.")
 
+            # ---------- Сила и ускорение от уклона ----------
+            if 'Уклон' in df.columns:
+                uklon = pd.to_numeric(df['Уклон'], errors='coerce')
+                F = uklon * TRAIN_MASS_T * 9.81
+                df[COL_SLOPE_FORCE] = F
+                df[COL_SLOPE_ACCEL] = F / TOTAL_MASS_KG
+
+            # ---------- Ускорение от силы тяги ----------
+            if TRACTION_NAME in df.columns:
+                tr = pd.to_numeric(df[TRACTION_NAME], errors='coerce')
+                df[COL_TRACTION_ACCEL] = tr / TOTAL_MASS_KG
+
+            # ---------- Процент силы тяги ----------
+            if TRACTION_NAME in df.columns:
+                tr = pd.to_numeric(df[TRACTION_NAME], errors='coerce')
+                tr_abs_max = tr.abs().max()
+                if pd.notna(tr_abs_max) and tr_abs_max > 0:
+                    df[COL_TRACTION_PCT] = tr.abs() / tr_abs_max * 100.0
+                else:
+                    df[COL_TRACTION_PCT] = np.nan
+
             time = df[self.time_col].values
             V    = df[speed_col].values
 
@@ -895,6 +999,34 @@ class SpeedAnalyzerApp:
 
             V_used_ms = V_used / 3.6
             df[COL_V_MS] = V_used_ms
+
+            # ---------- Сила сопротивления движению ----------
+            V_kmh = V_used
+            df[COL_RESISTANCE_FORCE] = (
+                (5.2 + (34.2 + 0.732 * V_kmh + 0.022 * V_kmh ** 2)
+                 / AXLE_LOAD_T)
+                * TRAIN_MASS_T
+                * RESISTANCE_COEF
+            )
+
+            # ---------- Ускорение от силы сопротивления ----------
+            df[COL_RESISTANCE_ACCEL] = df[COL_RESISTANCE_FORCE] / TOTAL_MASS_KG
+
+            # ---------- Сумма ускорений ----------
+            # a_сумм = −a_тяги + a_уклона + a_сопр
+            sum_accel = np.zeros(len(df))
+            has_any = False
+            if COL_TRACTION_ACCEL in df.columns:
+                sum_accel -= df[COL_TRACTION_ACCEL].fillna(0).values
+                has_any = True
+            if COL_SLOPE_ACCEL in df.columns:
+                sum_accel += df[COL_SLOPE_ACCEL].fillna(0).values
+                has_any = True
+            if COL_RESISTANCE_ACCEL in df.columns:
+                sum_accel += df[COL_RESISTANCE_ACCEL].fillna(0).values
+                has_any = True
+            if has_any:
+                df[COL_SUM_ACCEL] = sum_accel
 
             # ---------- Ускорение из (возможно сглаженной) скорости ----------
             accel = calculate_acceleration(V_used_ms, time)
@@ -938,6 +1070,15 @@ class SpeedAnalyzerApp:
 
             df[COL_JITTER] = calculate_jitter(accel_final, time,
                                               half_window_sec=half_window)
+
+            # ---------- Коэффициент K ----------
+            # K = сглаженное ускорение / сумма ускорений
+            if COL_SUM_ACCEL in df.columns:
+                denom = df[COL_SUM_ACCEL].values.astype(float)
+                with np.errstate(divide='ignore', invalid='ignore'):
+                    k_vals = np.asarray(accel_final, dtype=float) / denom
+                k_vals = np.where(np.isfinite(k_vals), k_vals, np.nan)
+                df[COL_K] = k_vals
 
             # ---------- Дефолтные столбцы ----------
             top_default = (COL_V_SMOOTH if self.stage_speed.enabled.get()

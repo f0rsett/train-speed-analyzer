@@ -17,6 +17,15 @@ UNITS = {
     'Коридор ускорения (1-е сглаж.)': 'м/с²',
     'Коридор ускорения (2-е сглаж.)': 'м/с²',
     'Дребезг ускорения': 'м/с²',
+    'Сила от уклона': 'Н',
+    'Ускорение от уклона': 'м/с²',
+    'Ускорение от силы тяги': 'м/с²',
+    'Сила сопротивления движению': 'Н',
+    'Ускорение от силы сопротивления': 'м/с²',
+    'Сумма ускорений': 'м/с²',
+    'Коэффициент K': '',
+    'Сила тяги': 'Н',
+    'Процент силы тяги': '%',
     'Уклон': '‰',
     'ТЦ': 'кгс/см²',
     'ТМ': 'кгс/см²',
@@ -30,13 +39,12 @@ EXCLUDED_COLUMNS = {
     'KLUB_Coord',
     'KLUB_PUR',
     'Af_sr[1]',
-    'Freal',
     'Нижняя граница скорости',
     'Верхняя граница скорости',
     'Нижняя граница ускорения (1-е)',
     'Верхняя граница ускорения (1-е)',
     'Нижняя граница ускорения (2-е)',
-    'Верхняя граница ускорения (2-е)',
+    'Верхняя граница ускорения (2-е)'
 }
 
 COLORS = {
@@ -49,6 +57,15 @@ COLORS = {
     'Ускорение после 2-го сглаживания': '#8c2d8c',
     'Ускорение сглаженное':   '#e377c2',
     'Дребезг ускорения':      '#d62728',
+    'Сила от уклона':         '#a0522d',
+    'Ускорение от уклона':    '#8b4513',
+    'Ускорение от силы тяги': '#2e8b57',
+    'Сила сопротивления движению': '#34495e',
+    'Ускорение от силы сопротивления': '#5d6d7e',
+    'Сумма ускорений':        '#000000',
+    'Коэффициент K':          '#8e44ad',
+    'Сила тяги':              '#2e8b57',
+    'Процент силы тяги':      '#4682b4',
     'Уклон':                  '#7f7f7f',
     'ТЦ':                     '#bcbd22',
     'ТМ':                     '#d62728',
@@ -57,14 +74,12 @@ COLORS = {
     'Тормоз':                 '#d62728',
 }
 
-# Цвета для псевдо-столбцов коридоров — все три разных
 CORRIDOR_COLORS = {
     'Коридор скорости':               '#2c5f8d',
     'Коридор ускорения (1-е сглаж.)': '#e67e22',
     'Коридор ускорения (2-е сглаж.)': '#27ae60',
 }
 
-# Псевдо-столбцы коридоров: имя -> (нижняя граница в df, верхняя граница в df)
 CORRIDOR_COLUMNS = {
     'Коридор скорости':               ('Нижняя граница скорости',
                                        'Верхняя граница скорости'),
@@ -77,6 +92,7 @@ CORRIDOR_COLUMNS = {
 ZORDER = {
     'Тяга':   6,
     'Тормоз': 5,
+    'Сумма ускорений': 7,
 }
 
 HISTOGRAM_COLUMNS = {'Тяга', 'Тормоз'}
@@ -195,8 +211,6 @@ class PlotManager:
         return segments
 
     def _plot_column(self, ax, col, time, color, color_idx):
-        """Рисует столбец (линию, гистограмму или коридор) в заданных осях."""
-        # --- Псевдо-столбец коридора ---
         if col in CORRIDOR_COLUMNS:
             low_col, high_col = CORRIDOR_COLUMNS[col]
             if low_col not in self.df.columns or high_col not in self.df.columns:
@@ -212,7 +226,6 @@ class PlotManager:
             ax.plot(time, high, '--', color=c, linewidth=1, alpha=0.85, zorder=1)
             return
 
-        # --- Обычный столбец ---
         if col not in self.df.columns:
             return
 
@@ -239,7 +252,8 @@ class PlotManager:
                        label=label if first else None, zorder=z)
                 first = False
         else:
-            ax.plot(time, y_plot, label=label, color=color, linewidth=1.5, zorder=z)
+            lw = 2.2 if col in ('Сумма ускорений', 'Коэффициент K') else 1.5
+            ax.plot(time, y_plot, label=label, color=color, linewidth=lw, zorder=z)
 
     def show_plots(self):
         if self.df is None or self.time_col is None:
@@ -265,7 +279,6 @@ class PlotManager:
         time = self.df[self.time_col].values
         colors = plt.cm.tab10(np.linspace(0, 1, 10))
 
-        # ---- Верхний график ----
         color_idx = 0
         for col in self.top_columns:
             color = COLORS.get(col, colors[color_idx % len(colors)])
@@ -285,7 +298,6 @@ class PlotManager:
         ax1.grid(True, alpha=0.3)
         ax1.set_xlim(time.min(), time.max())
 
-        # ---- Нижний график ----
         color_idx = 0
         for col in self.bottom_columns:
             color = COLORS.get(col, colors[color_idx % len(colors)])
@@ -306,7 +318,6 @@ class PlotManager:
         ax2.grid(True, alpha=0.3)
         ax2.set_xlim(time.min(), time.max())
 
-        # ---- Y-границы ----
         for ax in (ax1, ax2):
             y_min = np.inf
             y_max = -np.inf
@@ -502,7 +513,6 @@ class PlotManager:
                 )
 
     def select_full_range(self):
-        """Программно выделяет весь диапазон времени и считает статистику."""
         if self.df is None or self.time_col is None:
             return
         if self.ax1 is None or self.ax2 is None or self.canvas is None:
@@ -517,7 +527,6 @@ class PlotManager:
         if x2 <= x1:
             return
 
-        # Рисуем те же жёлтые полосы, что и при выделении мышью
         self._clear_rects()
         r1 = self.ax1.axvspan(x1, x2, alpha=0.3, color='yellow')
         r2 = self.ax2.axvspan(x1, x2, alpha=0.3, color='yellow')
