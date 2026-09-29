@@ -75,6 +75,93 @@ LOW_ACCEL_2  = 'Нижняя граница ускорения (2-е)'
 HIGH_ACCEL_2 = 'Верхняя граница ускорения (2-е)'
 
 
+# ==================================================================
+# Всплывающие подсказки
+# ==================================================================
+class ToolTip:
+    """Всплывающая подсказка при наведении курсора на виджет."""
+
+    def __init__(self, widget, text, delay=500, wraplength=280,
+                 bg="#ffffe0", fg="#2c3e50", border="#c9b96b"):
+        self.widget     = widget
+        self.text       = text
+        self.delay      = delay
+        self.wraplength = wraplength
+        self.bg         = bg
+        self.fg         = fg
+        self.border     = border
+        self._after_id  = None
+        self._tip       = None
+
+        widget.bind("<Enter>",       self._on_enter, add="+")
+        widget.bind("<Leave>",       self._on_leave, add="+")
+        widget.bind("<ButtonPress>", self._on_leave, add="+")
+        widget.bind("<Destroy>",     self._on_leave, add="+")
+
+    def set_text(self, text):
+        self.text = text
+
+    def _on_enter(self, event=None):
+        self._cancel()
+        try:
+            self._after_id = self.widget.after(self.delay, self._show)
+        except Exception:
+            self._after_id = None
+
+    def _on_leave(self, event=None):
+        self._cancel()
+        self._hide()
+
+    def _cancel(self):
+        if self._after_id is not None:
+            try:
+                self.widget.after_cancel(self._after_id)
+            except Exception:
+                pass
+            self._after_id = None
+
+    def _show(self):
+        if self._tip is not None:
+            return
+        if not self.widget.winfo_exists():
+            return
+        try:
+            x = self.widget.winfo_rootx() + 20
+            y = self.widget.winfo_rooty() + self.widget.winfo_height() + 6
+        except Exception:
+            return
+        try:
+            self._tip = tk.Toplevel(self.widget)
+            self._tip.wm_overrideredirect(True)
+            self._tip.wm_geometry(f"+{x}+{y}")
+            self._tip.attributes("-topmost", True)
+            lbl = tk.Label(self._tip,
+                           text=self.text,
+                           justify='left',
+                           background=self.bg,
+                           foreground=self.fg,
+                           relief='solid',
+                           borderwidth=1,
+                           highlightbackground=self.border,
+                           font=("Segoe UI", 8),
+                           wraplength=self.wraplength,
+                           padx=8, pady=4)
+            lbl.pack()
+        except Exception:
+            self._tip = None
+
+    def _hide(self):
+        if self._tip is not None:
+            try:
+                self._tip.destroy()
+            except Exception:
+                pass
+            self._tip = None
+
+
+# ==================================================================
+# Стили
+# ==================================================================
 def _setup_styles(root):
     style = ttk.Style(root)
     try:
@@ -98,11 +185,11 @@ def _setup_styles(root):
     style.configure("TLabelframe.Label", background=PANEL_BG,
                     foreground=ACCENT, font=FONT_BOLD)
 
-    def _button_style(name, bg, fg="white", hover=None):
+    def _button_style(name, bg, fg="white", hover=None, padding=(14, 8), font=FONT_BOLD):
         hover = hover or bg
-        style.configure(name, font=FONT_BOLD, foreground=fg,
+        style.configure(name, font=font, foreground=fg,
                         background=bg, borderwidth=0, focusthickness=0,
-                        padding=(14, 8))
+                        padding=padding)
         style.map(name,
                   background=[("active", hover), ("pressed", hover)],
                   foreground=[("disabled", "#cccccc")])
@@ -112,6 +199,21 @@ def _setup_styles(root):
     _button_style("Warning.TButton", WARNING, hover="#f39c12")
     _button_style("Danger.TButton",  DANGER,  hover="#ff6b6b")
     _button_style("Secondary.TButton", "#e8eef5", fg=ACCENT, hover="#d5e2f0")
+
+    _button_style("SmallPrimary.TButton",   ACCENT, hover=ACCENT_HOV,
+                  padding=(8, 3), font=("Segoe UI", 9))
+    _button_style("SmallDanger.TButton",    DANGER, hover="#ff6b6b",
+                  padding=(8, 3), font=("Segoe UI", 9))
+    _button_style("SmallSecondary.TButton", "#e8eef5", fg=ACCENT, hover="#d5e2f0",
+                  padding=(8, 3), font=("Segoe UI", 9))
+    _button_style("SmallSuccess.TButton",   SUCCESS, hover="#2ecc71",
+                  padding=(8, 3), font=("Segoe UI", 9))
+    _button_style("SmallWarning.TButton",   WARNING, hover="#f39c12",
+                  padding=(8, 3), font=("Segoe UI", 9))
+
+    # ---- Квадратная кнопка-иконка ----
+    _button_style("Icon.TButton", "#e8eef5", fg=ACCENT, hover="#d5e2f0",
+                  padding=(8, 6), font=("Segoe UI", 11, "bold"))
 
     style.configure("TCheckbutton", background=BG, foreground=FG, font=FONT_BASE)
     style.map("TCheckbutton", background=[("active", BG)])
@@ -126,6 +228,78 @@ def _setup_styles(root):
     style.configure("TSeparator", background=BORDER)
 
 
+# ==================================================================
+# Тексты подсказок
+# ==================================================================
+STAGE_TIPS = {
+    "enabled":  "Включить/выключить эту ступень сглаживания.\n"
+                "Если выключено — данные передаются дальше без изменений.",
+    "algo":     "Метод сглаживания сигнала:\n"
+                "• Стандартный — двойное усреднение с коридором,\n"
+                "• Экспоненциальный — EMA,\n"
+                "• Калман — оптимальный фильтр,\n"
+                "• Медианный — против импульсных выбросов,\n"
+                "• Савицкого–Голея — сглаживание полиномом.",
+
+    "default.corridor":     "Ширина коридора вокруг усечённого среднего, %.\n"
+                            "Значения вне коридора обрезаются до границ.\n"
+                            "Больше — мягче ограничения, сильнее разброс.",
+    "default.window_trunc": "Окно усечённого среднего (нечётное).\n"
+                            "Внутри окна отбрасываются макс. и мин.,\n"
+                            "остальные усредняются. Больше — устойчивее к выбросам.",
+    "default.window_final": "Окно финального скользящего среднего (нечётное).\n"
+                            "Больше — сглаженнее итоговая кривая.",
+
+    "exponential.alpha":    "Коэффициент α экспоненциального сглаживания:\n"
+                            "y[i] = α·x[i] + (1−α)·y[i−1].\n"
+                            "Меньше — сильнее сглаживание и инерция,\n"
+                            "больше — ближе к исходному сигналу.",
+
+    "kalman.q":             "Шум процесса Q фильтра Калмана.\n"
+                            "Больше — фильтр быстрее реагирует на изменения,\n"
+                            "но становится шумнее.",
+    "kalman.r":             "Шум измерения R фильтра Калмана.\n"
+                            "Больше — фильтр больше доверяет модели,\n"
+                            "кривая становится плавнее и инертнее.",
+
+    "median.window":        "Размер окна медианного фильтра (нечётное).\n"
+                            "Хорошо убирает одиночные импульсные выбросы.\n"
+                            "Больше — сильнее сглаживание, могут теряться пики.",
+
+    "savgol.window":        "Окно фильтра Савицкого–Голея (нечётное).\n"
+                            "Больше — сильнее сглаживание, но хуже передаются\n"
+                            "быстрые изменения.",
+    "savgol.order":         "Степень аппроксимирующего полинома (обычно 2–4).\n"
+                            "Меньше степень — сильнее сглаживание,\n"
+                            "больше — лучше сохраняются локальные формы.",
+}
+
+APP_TIPS = {
+    "jitter_window": "Размер окна ±Δt для расчёта локального размаха\n"
+                     "ускорения (max − min) — это мера дребезга.\n"
+                     "Больше окно — дребезг усредняется по более длинному\n"
+                     "интервалу времени.",
+
+    "k_threshold":   "Порог дребезга ускорения.\n"
+                     "Коэффициент K считается только там, где дребезг ниже порога.\n"
+                     "При превышении порога K «замораживается» — держится\n"
+                     "последнее валидное значение.",
+
+    "k_q":           "Шум процесса Q фильтра Калмана для K.\n"
+                     "Больше — K быстрее реагирует на изменения, но шумнее.\n"
+                     "Меньше — K стабильнее, но инертнее.",
+
+    "k_r":           "Шум измерения R фильтра Калмана для K.\n"
+                     "Больше — K более стабильный и плавный.\n"
+                     "Меньше — K сильнее следует за сырыми значениями.",
+
+    "toggle_panel":  "Скрыть панель управления (F9)",
+}
+
+
+# ==================================================================
+# Ступень сглаживания
+# ==================================================================
 class SmoothingStage:
     """Одна ступень сглаживания: вкл/выкл + алгоритм + параметры."""
 
@@ -160,9 +334,11 @@ class SmoothingStage:
         row1 = ttk.Frame(self.frame, style="Card.TFrame")
         row1.pack(fill='x')
 
-        ttk.Checkbutton(row1, text="Применять",
-                        variable=self.enabled,
-                        style="Card.TCheckbutton").pack(side=tk.LEFT)
+        self.cb_enabled = ttk.Checkbutton(row1, text="Применять",
+                                          variable=self.enabled,
+                                          style="Card.TCheckbutton")
+        self.cb_enabled.pack(side=tk.LEFT)
+        ToolTip(self.cb_enabled, STAGE_TIPS["enabled"])
 
         ttk.Label(row1, text="Алгоритм:",
                   style="Card.TLabel").pack(side=tk.LEFT, padx=(8, 4))
@@ -172,6 +348,7 @@ class SmoothingStage:
         self.cb.set(self.ALGO_REVERSE[algo_default])
         self.cb.pack(side=tk.LEFT, fill='x', expand=True)
         self.cb.bind('<<ComboboxSelected>>', self._on_algo_change)
+        ToolTip(self.cb, STAGE_TIPS["algo"])
 
         self.params_frame = ttk.Frame(self.frame, style="Card.TFrame")
         self.params_frame.pack(fill='x', pady=(6, 0))
@@ -196,25 +373,40 @@ class SmoothingStage:
             ttk.Label(self.params_frame, text=t,
                       style="Card.TLabel").pack(side=tk.LEFT)
 
-        def sp(var, f, t, inc, w=5):
-            ttk.Spinbox(self.params_frame, from_=f, to=t, increment=inc,
-                        width=w, textvariable=var,
-                        font=FONT_BASE).pack(side=tk.LEFT, padx=3)
+        def sp(var, f, t, inc, w, tip_key):
+            box = ttk.Spinbox(self.params_frame, from_=f, to=t, increment=inc,
+                              width=w, textvariable=var,
+                              font=FONT_BASE)
+            box.pack(side=tk.LEFT, padx=3)
+            tip_text = STAGE_TIPS.get(tip_key)
+            if tip_text:
+                ToolTip(box, tip_text)
+            return box
 
         if code == 'default':
-            lbl("Коридор:");   sp(p['corridor'],     0.01, 10.0, 0.01, 5); lbl("%")
-            lbl("  Усеч.:");   sp(p['window_trunc'], 3, 101, 2, 4)
-            lbl("  Фин.:");    sp(p['window_final'], 3, 201, 2, 4)
+            lbl("Коридор:")
+            sp(p['corridor'],     0.01, 10.0, 0.01, 5, "default.corridor")
+            lbl("%")
+            lbl("  Усеч.:")
+            sp(p['window_trunc'], 3, 101, 2, 4, "default.window_trunc")
+            lbl("  Фин.:")
+            sp(p['window_final'], 3, 201, 2, 4, "default.window_final")
         elif code == 'exponential':
-            lbl("α:");         sp(p['alpha'], 0.01, 1.0, 0.01, 5)
+            lbl("α:")
+            sp(p['alpha'], 0.01, 1.0, 0.01, 5, "exponential.alpha")
         elif code == 'kalman':
-            lbl("Q:"); sp(p['q'], 0.0001, 1.0, 0.0001, 7)
-            lbl("  R:"); sp(p['r'], 0.0001, 1.0, 0.0001, 7)
+            lbl("Q:")
+            sp(p['q'], 0.0001, 1.0, 0.0001, 7, "kalman.q")
+            lbl("  R:")
+            sp(p['r'], 0.0001, 1.0, 0.0001, 7, "kalman.r")
         elif code == 'median':
-            lbl("Окно:"); sp(p['window'], 3, 21, 2, 4)
+            lbl("Окно:")
+            sp(p['window'], 3, 21, 2, 4, "median.window")
         elif code == 'savgol':
-            lbl("Окно:");     sp(p['window'], 5, 31, 2, 4)
-            lbl("  Степень:"); sp(p['order'], 1, 5, 1, 3)
+            lbl("Окно:")
+            sp(p['window'], 5, 31, 2, 4, "savgol.window")
+            lbl("  Степень:")
+            sp(p['order'], 1, 5, 1, 3, "savgol.order")
 
     def get_params(self):
         code = self.algo_code
@@ -224,6 +416,9 @@ class SmoothingStage:
         self.frame.pack(**kw)
 
 
+# ==================================================================
+# Диалог выбора столбцов
+# ==================================================================
 class ColumnSelectorDialog:
     def __init__(self, parent, title, all_columns, default_selected=None, useful_columns=None):
         self.parent = parent
@@ -356,6 +551,9 @@ class ColumnSelectorDialog:
         self.dialog.destroy()
 
 
+# ==================================================================
+# Главное приложение
+# ==================================================================
 class SpeedAnalyzerApp:
     def __init__(self, root):
         self.root = root
@@ -390,7 +588,14 @@ class SpeedAnalyzerApp:
         self.k_kalman_q_var         = tk.DoubleVar(value=0.01)
         self.k_kalman_r_var         = tk.DoubleVar(value=0.1)
 
+        # ---- Состояние панели управления ----
+        self.control_panel_visible = True
+        self.tooltip_toggle_panel  = None
+
         self.create_widgets()
+
+        # ---- Горячая клавиша F9 ----
+        self.root.bind("<F9>", lambda e: self.toggle_control_panel())
 
     def create_widgets(self):
         self.status_var = tk.StringVar()
@@ -400,10 +605,10 @@ class SpeedAnalyzerApp:
                               bg="#e8eef5", fg=FG, padx=12, pady=6)
         status_bar.pack(side=tk.BOTTOM, fill=tk.X)
 
-        main_split = ttk.Frame(self.root, padding=(12, 12, 12, 6))
-        main_split.pack(fill=tk.BOTH, expand=True)
+        self.main_split = ttk.Frame(self.root, padding=(12, 12, 12, 6))
+        self.main_split.pack(fill=tk.BOTH, expand=True)
 
-        left_container = ttk.Frame(main_split)
+        left_container = ttk.Frame(self.main_split)
         left_container.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
         top_card = ttk.Frame(left_container, style="Card.TFrame", padding=12)
@@ -416,6 +621,14 @@ class SpeedAnalyzerApp:
                                  font=FONT_SMALL, bg=PANEL_BG, fg=FG_MUTED,
                                  anchor='w')
         self.lbl_path.pack(side=tk.LEFT, padx=14, fill='x', expand=True)
+
+        # ---- Кнопка-переключатель панели (самая правая) ----
+        self.btn_toggle_panel = ttk.Button(top_card, text="▶",
+                                           command=self.toggle_control_panel,
+                                           style="Icon.TButton")
+        self.btn_toggle_panel.pack(side=tk.RIGHT, padx=(6, 0))
+        self.tooltip_toggle_panel = ToolTip(self.btn_toggle_panel,
+                                            APP_TIPS["toggle_panel"])
 
         ttk.Button(top_card, text="⚡  Выполнить расчёт",
                    command=self.calculate, style="Primary.TButton").pack(side=tk.RIGHT)
@@ -445,46 +658,66 @@ class SpeedAnalyzerApp:
         info_row = ttk.Frame(pipeline_frame, style="Card.TFrame")
         info_row.pack(fill='x', pady=(8, 0))
 
-        ttk.Label(info_row, text="Дребезг ускорения — окно ±",
-                  style="Card.TLabel").pack(side=tk.LEFT)
-        ttk.Spinbox(info_row, from_=0.1, to=120.0, increment=0.5,
-                    width=6, textvariable=self.jitter_window_var,
-                    font=FONT_BASE).pack(side=tk.LEFT, padx=4)
-        ttk.Label(info_row, text="с",
-                  style="Card.TLabel").pack(side=tk.LEFT)
+        lbl_jw = ttk.Label(info_row, text="Дребезг ускорения — окно ±",
+                           style="Card.TLabel")
+        lbl_jw.pack(side=tk.LEFT)
+        ToolTip(lbl_jw, APP_TIPS["jitter_window"])
+
+        sb_jw = ttk.Spinbox(info_row, from_=0.1, to=120.0, increment=0.5,
+                            width=6, textvariable=self.jitter_window_var,
+                            font=FONT_BASE)
+        sb_jw.pack(side=tk.LEFT, padx=4)
+        ToolTip(sb_jw, APP_TIPS["jitter_window"])
+
+        ttk.Label(info_row, text="с", style="Card.TLabel").pack(side=tk.LEFT)
 
         self.info_label = ttk.Label(info_row, text="", style="CardMuted.TLabel")
         self.info_label.pack(side=tk.LEFT, padx=(16, 0))
         self._update_info_label()
 
-        # ---- Строка параметров коэффициента K ----
         k_row = ttk.Frame(pipeline_frame, style="Card.TFrame")
         k_row.pack(fill='x', pady=(6, 0))
 
-        ttk.Label(k_row, text="Коэф. K: считаем, если дребезг <",
-                  style="Card.TLabel").pack(side=tk.LEFT)
-        ttk.Spinbox(k_row, from_=0.0, to=1.0, increment=0.001,
-                    width=7, textvariable=self.k_jitter_threshold_var,
-                    font=FONT_BASE).pack(side=tk.LEFT, padx=4)
+        lbl_kt = ttk.Label(k_row, text="Коэф. K: считаем, если дребезг <",
+                           style="Card.TLabel")
+        lbl_kt.pack(side=tk.LEFT)
+        ToolTip(lbl_kt, APP_TIPS["k_threshold"])
+
+        sb_kt = ttk.Spinbox(k_row, from_=0.0, to=1.0, increment=0.001,
+                            width=7, textvariable=self.k_jitter_threshold_var,
+                            font=FONT_BASE)
+        sb_kt.pack(side=tk.LEFT, padx=4)
+        ToolTip(sb_kt, APP_TIPS["k_threshold"])
+
         ttk.Label(k_row, text="м/с²",
                   style="Card.TLabel").pack(side=tk.LEFT, padx=(0, 14))
 
-        ttk.Label(k_row, text="Калман Q:",
-                  style="Card.TLabel").pack(side=tk.LEFT)
-        ttk.Spinbox(k_row, from_=0.000001, to=1.0, increment=0.0001,
-                    width=8, textvariable=self.k_kalman_q_var,
-                    font=FONT_BASE).pack(side=tk.LEFT, padx=4)
+        lbl_kq = ttk.Label(k_row, text="Калман Q:",
+                           style="Card.TLabel")
+        lbl_kq.pack(side=tk.LEFT)
+        ToolTip(lbl_kq, APP_TIPS["k_q"])
 
-        ttk.Label(k_row, text="R:",
-                  style="Card.TLabel").pack(side=tk.LEFT, padx=(8, 0))
-        ttk.Spinbox(k_row, from_=0.000001, to=1.0, increment=0.0001,
-                    width=8, textvariable=self.k_kalman_r_var,
-                    font=FONT_BASE).pack(side=tk.LEFT, padx=4)
+        sb_kq = ttk.Spinbox(k_row, from_=0.000001, to=1.0, increment=0.0001,
+                            width=8, textvariable=self.k_kalman_q_var,
+                            font=FONT_BASE)
+        sb_kq.pack(side=tk.LEFT, padx=4)
+        ToolTip(sb_kq, APP_TIPS["k_q"])
+
+        lbl_kr = ttk.Label(k_row, text="R:", style="Card.TLabel")
+        lbl_kr.pack(side=tk.LEFT, padx=(8, 0))
+        ToolTip(lbl_kr, APP_TIPS["k_r"])
+
+        sb_kr = ttk.Spinbox(k_row, from_=0.000001, to=1.0, increment=0.0001,
+                            width=8, textvariable=self.k_kalman_r_var,
+                            font=FONT_BASE)
+        sb_kr.pack(side=tk.LEFT, padx=4)
+        ToolTip(sb_kr, APP_TIPS["k_r"])
 
         self.figure_frame = ttk.Frame(left_container, style="Card.TFrame")
         self.figure_frame.pack(fill=tk.BOTH, expand=True)
 
-        self.control_panel = ttk.Frame(main_split, style="Card.TFrame", width=400)
+        # ---- Панель управления (изначально видна) ----
+        self.control_panel = ttk.Frame(self.main_split, style="Card.TFrame", width=360)
         self.control_panel.pack(side=tk.RIGHT, fill=tk.Y, padx=(12, 0))
         self.control_panel.pack_propagate(False)
 
@@ -498,85 +731,120 @@ class SpeedAnalyzerApp:
 
         self.create_control_panel()
 
+        # стартовое состояние — панель показана, кнопка «▶»
+        self.btn_toggle_panel.config(text="▶")
+        if self.tooltip_toggle_panel is not None:
+            self.tooltip_toggle_panel.set_text("Скрыть панель управления (F9)")
+
+    # ------------------------------------------------------------------
+    def toggle_control_panel(self):
+        """Свернуть/развернуть правую панель управления."""
+        if self.control_panel_visible:
+            self.control_panel.pack_forget()
+            self.control_panel_visible = False
+            self.btn_toggle_panel.config(text="◀")
+            if self.tooltip_toggle_panel is not None:
+                self.tooltip_toggle_panel.set_text("Показать панель управления (F9)")
+            self.status_var.set("Панель управления скрыта (F9 — показать)")
+        else:
+            self.control_panel.pack(side=tk.RIGHT, fill=tk.Y, padx=(12, 0))
+            self.control_panel_visible = True
+            self.btn_toggle_panel.config(text="▶")
+            if self.tooltip_toggle_panel is not None:
+                self.tooltip_toggle_panel.set_text("Скрыть панель управления (F9)")
+            self.status_var.set("Панель управления показана")
+
+    # ------------------------------------------------------------------
     def _card_section(self, parent, title=None):
-        wrap = ttk.Frame(parent, style="Card.TFrame", padding=(12, 10, 12, 10))
+        wrap = ttk.Frame(parent, style="Card.TFrame", padding=(10, 6, 10, 6))
         if title:
             ttk.Label(wrap, text=title, style="Section.TLabel").pack(anchor='w')
         return wrap
 
     def _separator(self, parent):
-        ttk.Separator(parent, orient='horizontal').pack(fill='x', pady=8)
+        ttk.Separator(parent, orient='horizontal').pack(fill='x', pady=4)
 
     def create_control_panel(self):
-        header = ttk.Frame(self.control_panel, style="Card.TFrame", padding=(14, 12, 14, 4))
+        header = ttk.Frame(self.control_panel, style="Card.TFrame",
+                           padding=(10, 8, 10, 2))
         header.pack(fill='x')
         ttk.Label(header, text="Управление графиками",
                   style="Section.TLabel").pack(anchor='w')
 
         sec_cols = self._card_section(self.control_panel, "Столбцы графиков")
-        sec_cols.pack(fill='x', padx=8, pady=(0, 6))
+        sec_cols.pack(fill='x', padx=6, pady=(0, 4))
 
         row_top = ttk.Frame(sec_cols, style="Card.TFrame")
         row_top.pack(fill='x')
         ttk.Label(row_top, text="Верхний:", style="Card.TLabel",
-                  width=10).pack(side=tk.LEFT)
+                  width=9).pack(side=tk.LEFT)
         ttk.Button(row_top, text="Выбрать…",
                    command=lambda: self.select_columns('top'),
-                   style="Secondary.TButton").pack(side=tk.LEFT, padx=6)
+                   style="SmallSecondary.TButton").pack(side=tk.LEFT, padx=4)
         self.lbl_top_selected = tk.Label(sec_cols, text="не выбрано",
                                          font=FONT_SMALL, bg=PANEL_BG, fg=FG_MUTED,
-                                         wraplength=340, justify='left', anchor='w')
-        self.lbl_top_selected.pack(fill='x', padx=(6, 0), pady=(4, 6))
+                                         wraplength=320, justify='left', anchor='w')
+        self.lbl_top_selected.pack(fill='x', padx=(4, 0), pady=(2, 4))
 
         row_bot = ttk.Frame(sec_cols, style="Card.TFrame")
         row_bot.pack(fill='x')
         ttk.Label(row_bot, text="Нижний:", style="Card.TLabel",
-                  width=10).pack(side=tk.LEFT)
+                  width=9).pack(side=tk.LEFT)
         ttk.Button(row_bot, text="Выбрать…",
                    command=lambda: self.select_columns('bottom'),
-                   style="Secondary.TButton").pack(side=tk.LEFT, padx=6)
+                   style="SmallSecondary.TButton").pack(side=tk.LEFT, padx=4)
         self.lbl_bottom_selected = tk.Label(sec_cols, text="не выбрано",
                                             font=FONT_SMALL, bg=PANEL_BG, fg=FG_MUTED,
-                                            wraplength=340, justify='left', anchor='w')
-        self.lbl_bottom_selected.pack(fill='x', padx=(6, 0), pady=(4, 4))
+                                            wraplength=320, justify='left', anchor='w')
+        self.lbl_bottom_selected.pack(fill='x', padx=(4, 0), pady=(2, 2))
 
         self._separator(self.control_panel)
 
-        row_btn = ttk.Frame(self.control_panel, style="Card.TFrame", padding=(14, 0, 14, 0))
+        row_btn = ttk.Frame(self.control_panel, style="Card.TFrame",
+                            padding=(10, 0, 10, 0))
         row_btn.pack(fill='x')
-        ttk.Button(row_btn, text="✓  Применить",
-                   command=self.apply_changes, style="Success.TButton").pack(
-            side=tk.LEFT, padx=(0, 6))
-        ttk.Button(row_btn, text="↺  Сбросить",
-                   command=self.reset_selection, style="Warning.TButton").pack(
-            side=tk.LEFT, padx=(0, 6))
-        ttk.Button(row_btn, text="⤢  Сбросить вид",
-                   command=self.reset_view, style="Secondary.TButton").pack(
-            side=tk.LEFT)
+        ttk.Button(row_btn, text="✓ Применить",
+                   command=self.apply_changes,
+                   style="SmallSuccess.TButton").pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Button(row_btn, text="↺ Сбросить",
+                   command=self.reset_selection,
+                   style="SmallWarning.TButton").pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Button(row_btn, text="⤢ Вид",
+                   command=self.reset_view,
+                   style="SmallSecondary.TButton").pack(side=tk.LEFT)
 
         self._separator(self.control_panel)
 
         sec_tools = self._card_section(self.control_panel, "Инструменты графика")
-        sec_tools.pack(fill='x', padx=8, pady=(0, 6))
+        sec_tools.pack(fill='x', padx=6, pady=(0, 4))
         self.toolbar_frame.pack(fill='x')
 
         self._separator(self.control_panel)
 
-        sec_sel = self._card_section(self.control_panel)
-        sec_sel.pack(fill='x', padx=8, pady=(0, 6))
+        sec_sel = self._card_section(self.control_panel, "Выделение области")
+        sec_sel.pack(fill='x', padx=6, pady=(0, 4))
         self.selection_mode_var = tk.BooleanVar(value=False)
         ttk.Checkbutton(sec_sel, text="Режим выделения (вкл/выкл)",
                         variable=self.selection_mode_var,
                         command=self.toggle_selection_mode,
                         style="Card.TCheckbutton").pack(anchor='w')
-        ttk.Button(sec_sel, text="Выделить всю область",
+
+        sel_btns_row1 = ttk.Frame(sec_sel, style="Card.TFrame")
+        sel_btns_row1.pack(fill='x', pady=(4, 0))
+        ttk.Button(sel_btns_row1, text="Выделить всю область",
                    command=self.select_full_range,
-                   style="Secondary.TButton").pack(anchor='w', pady=(6, 0))
+                   style="SmallSecondary.TButton").pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Button(sel_btns_row1, text="Очистить",
+                   command=self.clear_selection,
+                   style="SmallDanger.TButton").pack(side=tk.LEFT, padx=(0, 4))
+        ttk.Button(sel_btns_row1, text="В Excel",
+                   command=self.export_selection_to_excel,
+                   style="SmallPrimary.TButton").pack(side=tk.LEFT)
 
         self._separator(self.control_panel)
 
         sec_hover = self._card_section(self.control_panel, "Значения в точке")
-        sec_hover.pack(fill='x', padx=8, pady=(0, 6))
+        sec_hover.pack(fill='x', padx=6, pady=(0, 4))
 
         hover_border = tk.Frame(sec_hover, bg=BORDER)
         hover_border.pack(fill=tk.X, expand=False)
@@ -586,30 +854,20 @@ class SpeedAnalyzerApp:
                                     font=FONT_MONO,
                                     bg="#fbfcfe", fg=FG,
                                     justify='left', anchor='nw',
-                                    wraplength=340,
-                                    padx=10, pady=8)
+                                    wraplength=310,
+                                    padx=8, pady=6)
         self.hover_label.pack(fill=tk.BOTH, expand=True)
 
         self._separator(self.control_panel)
 
         stat_header = ttk.Frame(self.control_panel, style="Card.TFrame",
-                                padding=(14, 0, 14, 4))
+                                padding=(10, 0, 10, 2))
         stat_header.pack(fill='x')
         ttk.Label(stat_header, text="Статистика выделенной области",
                   style="Section.TLabel").pack(anchor='w')
 
-        stat_buttons = ttk.Frame(self.control_panel, style="Card.TFrame",
-                                 padding=(14, 0, 14, 4))
-        stat_buttons.pack(fill='x')
-        ttk.Button(stat_buttons, text="В Excel",
-                   command=self.export_selection_to_excel,
-                   style="Primary.TButton").pack(side=tk.LEFT, padx=(0, 6))
-        ttk.Button(stat_buttons, text="Очистить",
-                   command=self.clear_selection,
-                   style="Danger.TButton").pack(side=tk.LEFT)
-
         stat_body = ttk.Frame(self.control_panel, style="Card.TFrame",
-                              padding=(14, 0, 14, 12))
+                              padding=(10, 0, 10, 8))
         stat_body.pack(fill='x')
 
         selection_frame = ttk.Frame(stat_body, style="Card.TFrame")
@@ -1176,7 +1434,6 @@ class SpeedAnalyzerApp:
             self.lbl_bottom_selected.config(text=bottom_default, fg=FG)
 
             self.df_full = df
-            # новый расчёт — сбрасываем сохранённый зум
             self.apply_changes(preserve_view=False)
 
             self.status_var.set("Расчёт выполнен!")
