@@ -42,6 +42,9 @@ FREAL_TO_N = 1000.0
 AXLE_LOAD_T     = 24.78716216   # B10, вкладка «Данные», т
 RESISTANCE_COEF = 1.25          # N1, вкладка «Режим»
 
+# Защита от деления на почти-ноль при расчёте K (м/с²)
+K_MIN_DENOM = 1e-4
+
 FREAL_RAW_NAME = 'Freal'
 TRACTION_NAME  = 'Сила тяги'
 
@@ -63,6 +66,7 @@ COL_RESISTANCE_FORCE = 'Сила сопротивления движению'
 COL_RESISTANCE_ACCEL = 'Ускорение от силы сопротивления'
 COL_SUM_ACCEL        = 'Сумма ускорений'
 COL_K                = 'Коэффициент K'
+COL_ACCEL_K          = 'Ускорение с учётом K'
 
 LOW_SPEED    = 'Нижняя граница скорости'
 HIGH_SPEED   = 'Верхняя граница скорости'
@@ -382,6 +386,11 @@ class SpeedAnalyzerApp:
 
         self.jitter_window_var = tk.DoubleVar(value=5.0)
 
+        # ---- Параметры коэффициента K ----
+        self.k_jitter_threshold_var = tk.DoubleVar(value=0.01)
+        self.k_kalman_q_var         = tk.DoubleVar(value=0.01)
+        self.k_kalman_r_var         = tk.DoubleVar(value=0.1)
+
         self.create_widgets()
 
     def create_widgets(self):
@@ -448,6 +457,30 @@ class SpeedAnalyzerApp:
         self.info_label = ttk.Label(info_row, text="", style="CardMuted.TLabel")
         self.info_label.pack(side=tk.LEFT, padx=(16, 0))
         self._update_info_label()
+
+        # ---- Строка параметров коэффициента K ----
+        k_row = ttk.Frame(pipeline_frame, style="Card.TFrame")
+        k_row.pack(fill='x', pady=(6, 0))
+
+        ttk.Label(k_row, text="Коэф. K: считаем, если дребезг <",
+                  style="Card.TLabel").pack(side=tk.LEFT)
+        ttk.Spinbox(k_row, from_=0.0, to=1.0, increment=0.001,
+                    width=7, textvariable=self.k_jitter_threshold_var,
+                    font=FONT_BASE).pack(side=tk.LEFT, padx=4)
+        ttk.Label(k_row, text="м/с²",
+                  style="Card.TLabel").pack(side=tk.LEFT, padx=(0, 14))
+
+        ttk.Label(k_row, text="Калман Q:",
+                  style="Card.TLabel").pack(side=tk.LEFT)
+        ttk.Spinbox(k_row, from_=0.000001, to=1.0, increment=0.0001,
+                    width=8, textvariable=self.k_kalman_q_var,
+                    font=FONT_BASE).pack(side=tk.LEFT, padx=4)
+
+        ttk.Label(k_row, text="R:",
+                  style="Card.TLabel").pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Spinbox(k_row, from_=0.000001, to=1.0, increment=0.0001,
+                    width=8, textvariable=self.k_kalman_r_var,
+                    font=FONT_BASE).pack(side=tk.LEFT, padx=4)
 
         self.figure_frame = ttk.Frame(left_container, style="Card.TFrame")
         self.figure_frame.pack(fill=tk.BOTH, expand=True)
@@ -767,6 +800,8 @@ class SpeedAnalyzerApp:
             group_accel.append(COL_SUM_ACCEL)
         if COL_K in df_cols:
             group_accel.append(COL_K)
+        if COL_ACCEL_K in df_cols:
+            group_accel.append(COL_ACCEL_K)
         if COL_JITTER in df_cols:
             group_accel.append(COL_JITTER)
 
@@ -797,7 +832,7 @@ class SpeedAnalyzerApp:
 
         useful = ['Уклон', COL_SLOPE_FORCE, COL_SLOPE_ACCEL,
                   COL_TRACTION_ACCEL, COL_RESISTANCE_ACCEL,
-                  COL_RESISTANCE_FORCE, COL_SUM_ACCEL, COL_K,
+                  COL_RESISTANCE_FORCE, COL_SUM_ACCEL, COL_K, COL_ACCEL_K,
                   TRACTION_NAME, COL_TRACTION_PCT,
                   'Тяга', 'Тормоз',
                   'ТЦ', 'ТМ', 'ГР', 'Скорость',
@@ -905,6 +940,40 @@ class SpeedAnalyzerApp:
         return self.processor.smooth_default(values, n)
 
     # ------------------------------------------------------------------
+    @staticmethod
+    def _kalman_with_gating(values, valid_mask, q=0.01, r=0.1):
+        """Фильтр Калмана с «заморозкой».
+
+        Где valid_mask=True и значение конечно — шаг фильтра.
+        Где valid_mask=False — держим последнее отфильтрованное значение.
+        Состояние (x_est, p_est) сохраняется на всём протяжении сигнала.
+        До первого валидного значения результат — NaN.
+        """
+        n = len(values)
+        out = np.full(n, np.nan)
+        x_est = None
+        p_est = 1.0
+        last_held = np.nan
+        for i in range(n):
+            v = values[i]
+            if valid_mask[i] and np.isfinite(v):
+                if x_est is None:
+                    x_est = float(v)
+                    p_est = 1.0
+                else:
+                    x_pred = x_est
+                    p_pred = p_est + q
+                    k = p_pred / (p_pred + r)
+                    x_est = x_pred + k * (v - x_pred)
+                    p_est = (1 - k) * p_pred
+                out[i] = x_est
+                last_held = x_est
+            else:
+                if not np.isnan(last_held):
+                    out[i] = last_held
+        return out
+
+    # ------------------------------------------------------------------
     def calculate(self):
         if not self.file_path.get():
             messagebox.showerror("Ошибка", "Сначала выберите Excel-файл!")
@@ -943,7 +1012,7 @@ class SpeedAnalyzerApp:
                 COL_SLOPE_FORCE, COL_SLOPE_ACCEL,
                 COL_TRACTION_ACCEL, COL_TRACTION_PCT,
                 COL_RESISTANCE_FORCE, COL_RESISTANCE_ACCEL,
-                COL_SUM_ACCEL, COL_K,
+                COL_SUM_ACCEL, COL_K, COL_ACCEL_K,
                 'Ускорение сглаженное',
             ]
             df = df.drop(columns=[c for c in drop_cols if c in df.columns])
@@ -967,7 +1036,7 @@ class SpeedAnalyzerApp:
                 uklon = pd.to_numeric(df['Уклон'], errors='coerce')
                 F = uklon * TRAIN_MASS_T * 9.81
                 df[COL_SLOPE_FORCE] = F
-                df[COL_SLOPE_ACCEL] = F / TOTAL_MASS_KG
+                df[COL_SLOPE_ACCEL] = -F / TOTAL_MASS_KG
 
             # ---------- Ускорение от силы тяги ----------
             if TRACTION_NAME in df.columns:
@@ -1010,14 +1079,14 @@ class SpeedAnalyzerApp:
             )
 
             # ---------- Ускорение от силы сопротивления ----------
-            df[COL_RESISTANCE_ACCEL] = df[COL_RESISTANCE_FORCE] / TOTAL_MASS_KG
+            df[COL_RESISTANCE_ACCEL] = -df[COL_RESISTANCE_FORCE] / TOTAL_MASS_KG
 
             # ---------- Сумма ускорений ----------
-            # a_сумм = −a_тяги + a_уклона + a_сопр
+            # Знак вклада уже в каждом компоненте → простое сложение.
             sum_accel = np.zeros(len(df))
             has_any = False
             if COL_TRACTION_ACCEL in df.columns:
-                sum_accel -= df[COL_TRACTION_ACCEL].fillna(0).values
+                sum_accel += df[COL_TRACTION_ACCEL].fillna(0).values
                 has_any = True
             if COL_SLOPE_ACCEL in df.columns:
                 sum_accel += df[COL_SLOPE_ACCEL].fillna(0).values
@@ -1072,13 +1141,52 @@ class SpeedAnalyzerApp:
                                               half_window_sec=half_window)
 
             # ---------- Коэффициент K ----------
-            # K = сглаженное ускорение / сумма ускорений
+            # Логика:
+            #   * Точки с малым дребезгом (jitter < порога) — «хорошие»:
+            #     K_raw = accel_final / sum_accel, пропускается через Калман.
+            #   * Точки с большим дребезгом — K «замораживается»: держим
+            #     последнее отфильтрованное значение, состояние фильтра
+            #     сохраняется и «оживает» на следующем валидном участке.
             if COL_SUM_ACCEL in df.columns:
-                denom = df[COL_SUM_ACCEL].values.astype(float)
+                try:
+                    k_thr = float(self.k_jitter_threshold_var.get())
+                except (tk.TclError, ValueError):
+                    k_thr = 0.01
+                try:
+                    k_q = float(self.k_kalman_q_var.get())
+                except (tk.TclError, ValueError):
+                    k_q = 0.01
+                try:
+                    k_r = float(self.k_kalman_r_var.get())
+                except (tk.TclError, ValueError):
+                    k_r = 0.1
+
+                num        = np.asarray(accel_final, dtype=float)
+                denom      = df[COL_SUM_ACCEL].values.astype(float)
+                jitter_arr = df[COL_JITTER].values.astype(float)
+
                 with np.errstate(divide='ignore', invalid='ignore'):
-                    k_vals = np.asarray(accel_final, dtype=float) / denom
-                k_vals = np.where(np.isfinite(k_vals), k_vals, np.nan)
-                df[COL_K] = k_vals
+                    k_raw = num / denom
+                k_raw = np.where(np.isfinite(k_raw), k_raw, np.nan)
+
+                valid_mask = (
+                    np.isfinite(jitter_arr)
+                    & (jitter_arr < k_thr)
+                    & np.isfinite(denom)
+                    & (np.abs(denom) > K_MIN_DENOM)
+                    & np.isfinite(k_raw)
+                )
+
+                df[COL_K] = self._kalman_with_gating(k_raw, valid_mask,
+                                                     q=k_q, r=k_r)
+
+            # ---------- Ускорение с учётом K ----------
+            # a_K = сглаженное ускорение × K
+            if COL_K in df.columns:
+                df[COL_ACCEL_K] = (
+                    np.asarray(accel_final, dtype=float)
+                    * df[COL_K].values.astype(float)
+                )
 
             # ---------- Дефолтные столбцы ----------
             top_default = (COL_V_SMOOTH if self.stage_speed.enabled.get()
