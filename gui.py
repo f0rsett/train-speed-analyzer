@@ -42,7 +42,6 @@ FREAL_TO_N = 1000.0
 AXLE_LOAD_T     = 24.78716216   # B10, вкладка «Данные», т
 RESISTANCE_COEF = 1.25          # N1, вкладка «Режим»
 
-# Защита от деления на почти-ноль при расчёте K (м/с²)
 K_MIN_DENOM = 1e-4
 
 FREAL_RAW_NAME = 'Freal'
@@ -550,6 +549,9 @@ class SpeedAnalyzerApp:
             side=tk.LEFT, padx=(0, 6))
         ttk.Button(row_btn, text="↺  Сбросить",
                    command=self.reset_selection, style="Warning.TButton").pack(
+            side=tk.LEFT, padx=(0, 6))
+        ttk.Button(row_btn, text="⤢  Сбросить вид",
+                   command=self.reset_view, style="Secondary.TButton").pack(
             side=tk.LEFT)
 
         self._separator(self.control_panel)
@@ -768,7 +770,6 @@ class SpeedAnalyzerApp:
         has_accel_2_corr = (LOW_ACCEL_2 in self.df_full.columns
                             and HIGH_ACCEL_2 in self.df_full.columns)
 
-        # ---- Группа 1: скорость ----
         speed_raw = next((c for c in df_cols
                           if 'скорость' in c.lower() or 'speed' in c.lower()),
                          None)
@@ -781,7 +782,6 @@ class SpeedAnalyzerApp:
         if has_speed_corr:
             group_speed.append(CORRIDOR_SPEED_NAME)
 
-        # ---- Группа 2: ускорение ----
         group_accel = []
         for name in (COL_ACCEL_RAW, COL_ACCEL_1, COL_ACCEL_2):
             if name in df_cols:
@@ -805,10 +805,8 @@ class SpeedAnalyzerApp:
         if COL_JITTER in df_cols:
             group_accel.append(COL_JITTER)
 
-        # ---- Группа 3: давления ----
         group_pressure = [c for c in ('ТЦ', 'ТМ', 'ГР') if c in df_cols]
 
-        # ---- Группа 4: силы и уклон ----
         group_force = [c for c in (TRACTION_NAME, COL_TRACTION_PCT,
                                    'Тяга', 'Тормоз',
                                    COL_RESISTANCE_FORCE,
@@ -942,13 +940,7 @@ class SpeedAnalyzerApp:
     # ------------------------------------------------------------------
     @staticmethod
     def _kalman_with_gating(values, valid_mask, q=0.01, r=0.1):
-        """Фильтр Калмана с «заморозкой».
-
-        Где valid_mask=True и значение конечно — шаг фильтра.
-        Где valid_mask=False — держим последнее отфильтрованное значение.
-        Состояние (x_est, p_est) сохраняется на всём протяжении сигнала.
-        До первого валидного значения результат — NaN.
-        """
+        """Фильтр Калмана с «заморозкой»."""
         n = len(values)
         out = np.full(n, np.nan)
         x_est = None
@@ -1031,19 +1023,16 @@ class SpeedAnalyzerApp:
                 raise ValueError(
                     f"Слишком мало данных ({len(df)} строк). Нужно минимум 5.")
 
-            # ---------- Сила и ускорение от уклона ----------
             if 'Уклон' in df.columns:
                 uklon = pd.to_numeric(df['Уклон'], errors='coerce')
                 F = uklon * TRAIN_MASS_T * 9.81
                 df[COL_SLOPE_FORCE] = F
                 df[COL_SLOPE_ACCEL] = -F / TOTAL_MASS_KG
 
-            # ---------- Ускорение от силы тяги ----------
             if TRACTION_NAME in df.columns:
                 tr = pd.to_numeric(df[TRACTION_NAME], errors='coerce')
                 df[COL_TRACTION_ACCEL] = tr / TOTAL_MASS_KG
 
-            # ---------- Процент силы тяги ----------
             if TRACTION_NAME in df.columns:
                 tr = pd.to_numeric(df[TRACTION_NAME], errors='coerce')
                 tr_abs_max = tr.abs().max()
@@ -1055,7 +1044,6 @@ class SpeedAnalyzerApp:
             time = df[self.time_col].values
             V    = df[speed_col].values
 
-            # ---------- ① Сглаживание скорости ----------
             if self.stage_speed.enabled.get():
                 V_used = self._smooth(V, self.stage_speed.algo_code,
                                       self.stage_speed.get_params())
@@ -1069,7 +1057,6 @@ class SpeedAnalyzerApp:
             V_used_ms = V_used / 3.6
             df[COL_V_MS] = V_used_ms
 
-            # ---------- Сила сопротивления движению ----------
             V_kmh = V_used
             df[COL_RESISTANCE_FORCE] = (
                 (5.2 + (34.2 + 0.732 * V_kmh + 0.022 * V_kmh ** 2)
@@ -1078,11 +1065,8 @@ class SpeedAnalyzerApp:
                 * RESISTANCE_COEF
             )
 
-            # ---------- Ускорение от силы сопротивления ----------
             df[COL_RESISTANCE_ACCEL] = -df[COL_RESISTANCE_FORCE] / TOTAL_MASS_KG
 
-            # ---------- Сумма ускорений ----------
-            # Знак вклада уже в каждом компоненте → простое сложение.
             sum_accel = np.zeros(len(df))
             has_any = False
             if COL_TRACTION_ACCEL in df.columns:
@@ -1097,11 +1081,9 @@ class SpeedAnalyzerApp:
             if has_any:
                 df[COL_SUM_ACCEL] = sum_accel
 
-            # ---------- Ускорение из (возможно сглаженной) скорости ----------
             accel = calculate_acceleration(V_used_ms, time)
             df[COL_ACCEL_RAW] = accel
 
-            # ---------- ② 1-е сглаживание ускорения ----------
             accel1 = None
             accel2 = None
             if self.stage_accel1.enabled.get():
@@ -1113,7 +1095,6 @@ class SpeedAnalyzerApp:
                     df[HIGH_ACCEL_1] = self.processor.high_bound
                 accel = accel1
 
-            # ---------- ③ 2-е сглаживание ускорения ----------
             if self.stage_accel2.enabled.get():
                 accel2 = self._smooth(accel, self.stage_accel2.algo_code,
                                       self.stage_accel2.get_params())
@@ -1122,7 +1103,6 @@ class SpeedAnalyzerApp:
                     df[LOW_ACCEL_2]  = self.processor.low_bound
                     df[HIGH_ACCEL_2] = self.processor.high_bound
 
-            # ---------- Дребезг по финальному ускорению ----------
             if accel2 is not None:
                 accel_final = accel2
             elif accel1 is not None:
@@ -1140,13 +1120,6 @@ class SpeedAnalyzerApp:
             df[COL_JITTER] = calculate_jitter(accel_final, time,
                                               half_window_sec=half_window)
 
-            # ---------- Коэффициент K ----------
-            # Логика:
-            #   * Точки с малым дребезгом (jitter < порога) — «хорошие»:
-            #     K_raw = accel_final / sum_accel, пропускается через Калман.
-            #   * Точки с большим дребезгом — K «замораживается»: держим
-            #     последнее отфильтрованное значение, состояние фильтра
-            #     сохраняется и «оживает» на следующем валидном участке.
             if COL_SUM_ACCEL in df.columns:
                 try:
                     k_thr = float(self.k_jitter_threshold_var.get())
@@ -1180,15 +1153,12 @@ class SpeedAnalyzerApp:
                 df[COL_K] = self._kalman_with_gating(k_raw, valid_mask,
                                                      q=k_q, r=k_r)
 
-            # ---------- Ускорение с учётом K ----------
-            # a_K = сглаженное ускорение × K
             if COL_K in df.columns:
                 df[COL_ACCEL_K] = (
                     np.asarray(accel_final, dtype=float)
                     * df[COL_K].values.astype(float)
                 )
 
-            # ---------- Дефолтные столбцы ----------
             top_default = (COL_V_SMOOTH if self.stage_speed.enabled.get()
                            else speed_col)
             if self.stage_accel2.enabled.get():
@@ -1206,7 +1176,8 @@ class SpeedAnalyzerApp:
             self.lbl_bottom_selected.config(text=bottom_default, fg=FG)
 
             self.df_full = df
-            self.apply_changes()
+            # новый расчёт — сбрасываем сохранённый зум
+            self.apply_changes(preserve_view=False)
 
             self.status_var.set("Расчёт выполнен!")
             messagebox.showinfo("Успех", "Расчёт выполнен успешно!")
@@ -1215,7 +1186,7 @@ class SpeedAnalyzerApp:
             self.status_var.set("Ошибка!")
             messagebox.showerror("Ошибка", f"Произошла ошибка:\n{str(e)}")
 
-    def apply_changes(self):
+    def apply_changes(self, preserve_view=True):
         if self.df_full is None:
             messagebox.showinfo("Информация", "Сначала загрузите данные.")
             return
@@ -1230,8 +1201,21 @@ class SpeedAnalyzerApp:
             self.top_columns,
             self.bottom_columns,
         )
-        self.plot_manager.show_plots()
+        self.plot_manager.show_plots(preserve_view=preserve_view)
         self.status_var.set("Графики обновлены")
+
+    def reset_view(self):
+        """Сбросить зум осей и построить графики в авто-масштабе."""
+        if self.df_full is None:
+            return
+        self.plot_manager.set_data(
+            self.df_full,
+            self.time_col,
+            self.top_columns,
+            self.bottom_columns,
+        )
+        self.plot_manager.show_plots(preserve_view=False)
+        self.status_var.set("Вид сброшен")
 
     def reset_selection(self):
         if self.df_full is None:
@@ -1258,7 +1242,7 @@ class SpeedAnalyzerApp:
                 self.top_columns,
                 self.bottom_columns,
             )
-            self.plot_manager.show_plots()
+            self.plot_manager.show_plots(preserve_view=True)
             self.status_var.set("Графики возвращены к исходному виду")
         else:
             self.top_columns = []

@@ -263,12 +263,28 @@ class PlotManager:
                                 'Ускорение с учётом K') else 1.5
             ax.plot(time, y_plot, label=label, color=color, linewidth=lw, zorder=z)
 
-    def show_plots(self):
+    def show_plots(self, preserve_view=True):
         if self.df is None or self.time_col is None:
             return
         if not self.top_columns and not self.bottom_columns:
             return
 
+        # ---------- Сохранить текущие лимиты осей ----------
+        saved_view = None
+        if (preserve_view
+                and self.ax1 is not None
+                and self.ax2 is not None
+                and self.canvas is not None):
+            try:
+                saved_view = {
+                    'xlim':  tuple(self.ax1.get_xlim()),
+                    'ylim1': tuple(self.ax1.get_ylim()),
+                    'ylim2': tuple(self.ax2.get_ylim()),
+                }
+            except Exception:
+                saved_view = None
+
+        # ---------- Уничтожить старые виджеты / тулбар ----------
         for widget in self.figure_frame.winfo_children():
             widget.destroy()
 
@@ -326,6 +342,7 @@ class PlotManager:
         ax2.grid(True, alpha=0.3)
         ax2.set_xlim(time.min(), time.max())
 
+        # ---------- Авто-масштаб по Y ----------
         for ax in (ax1, ax2):
             y_min = np.inf
             y_max = -np.inf
@@ -366,6 +383,16 @@ class PlotManager:
                 y_range = y_max - y_min
                 if y_range > 0:
                     ax.set_ylim(y_min - y_range * 0.1, y_max + y_range * 0.1)
+
+        # ---------- Восстановить сохранённый вид ----------
+        if saved_view is not None:
+            try:
+                ax1.set_xlim(saved_view['xlim'])
+                ax2.set_xlim(saved_view['xlim'])
+                ax1.set_ylim(saved_view['ylim1'])
+                ax2.set_ylim(saved_view['ylim2'])
+            except Exception:
+                pass
 
         plt.tight_layout()
 
