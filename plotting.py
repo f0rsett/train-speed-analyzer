@@ -24,6 +24,7 @@ UNITS = {
     'Ускорение от силы сопротивления': 'м/с²',
     'Сумма ускорений': 'м/с²',
     'Коэффициент K': '',
+    'Коэффициент K2': '',
     'Ускорение с учётом K': 'м/с²',
     'Сила тяги': 'Н',
     'Процент силы тяги': '%',
@@ -48,8 +49,6 @@ EXCLUDED_COLUMNS = {
     'Верхняя граница ускорения (2-е)',
     # ---- TODO: удалить, когда перестанут быть нужны как напоминание ----
     'Сила от действия уклона, Н',
-    'Сила сопротивления движению, Н',
-    'Сумма ускорений',
 }
 
 COLORS = {
@@ -68,7 +67,8 @@ COLORS = {
     'Сила сопротивления движению': '#34495e',
     'Ускорение от силы сопротивления': '#5d6d7e',
     'Сумма ускорений':        '#000000',
-    'Коэффициент K':          '#8e44ad',
+    'Коэффициент K':          '#c39bd3',
+    'Коэффициент K2':         '#8e44ad',
     'Ускорение с учётом K':   '#e74c3c',
     'Сила тяги':              '#2e8b57',
     'Процент силы тяги':      '#4682b4',
@@ -98,6 +98,8 @@ CORRIDOR_COLUMNS = {
 ZORDER = {
     'Тяга':   6,
     'Тормоз': 5,
+    'Коэффициент K':   4,
+    'Коэффициент K2':  6,
     'Сумма ускорений': 7,
     'Ускорение с учётом K': 8,
 }
@@ -260,7 +262,7 @@ class PlotManager:
                 first = False
         else:
             lw = 2.2 if col in ('Сумма ускорений', 'Коэффициент K',
-                                'Ускорение с учётом K') else 1.5
+                                'Коэффициент K2', 'Ускорение с учётом K') else 1.5
             ax.plot(time, y_plot, label=label, color=color, linewidth=lw, zorder=z)
 
     def show_plots(self, preserve_view=True):
@@ -269,7 +271,6 @@ class PlotManager:
         if not self.top_columns and not self.bottom_columns:
             return
 
-        # ---------- Сохранить текущие лимиты осей ----------
         saved_view = None
         if (preserve_view
                 and self.ax1 is not None
@@ -284,7 +285,6 @@ class PlotManager:
             except Exception:
                 saved_view = None
 
-        # ---------- Уничтожить старые виджеты / тулбар ----------
         for widget in self.figure_frame.winfo_children():
             widget.destroy()
 
@@ -342,7 +342,6 @@ class PlotManager:
         ax2.grid(True, alpha=0.3)
         ax2.set_xlim(time.min(), time.max())
 
-        # ---------- Авто-масштаб по Y ----------
         for ax in (ax1, ax2):
             y_min = np.inf
             y_max = -np.inf
@@ -384,7 +383,6 @@ class PlotManager:
                 if y_range > 0:
                     ax.set_ylim(y_min - y_range * 0.1, y_max + y_range * 0.1)
 
-        # ---------- Восстановить сохранённый вид ----------
         if saved_view is not None:
             try:
                 ax1.set_xlim(saved_view['xlim'])

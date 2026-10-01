@@ -65,6 +65,7 @@ COL_RESISTANCE_FORCE = 'Сила сопротивления движению'
 COL_RESISTANCE_ACCEL = 'Ускорение от силы сопротивления'
 COL_SUM_ACCEL        = 'Сумма ускорений'
 COL_K                = 'Коэффициент K'
+COL_K2               = 'Коэффициент K2'
 COL_ACCEL_K          = 'Ускорение с учётом K'
 
 LOW_SPEED    = 'Нижняя граница скорости'
@@ -211,7 +212,6 @@ def _setup_styles(root):
     _button_style("SmallWarning.TButton",   WARNING, hover="#f39c12",
                   padding=(8, 3), font=("Segoe UI", 9))
 
-    # ---- Квадратная кнопка-иконка ----
     _button_style("Icon.TButton", "#e8eef5", fg=ACCENT, hover="#d5e2f0",
                   padding=(8, 6), font=("Segoe UI", 11, "bold"))
 
@@ -280,18 +280,25 @@ APP_TIPS = {
                      "Больше окно — дребезг усредняется по более длинному\n"
                      "интервалу времени.",
 
-    "k_threshold":   "Порог дребезга ускорения.\n"
-                     "Коэффициент K считается только там, где дребезг ниже порога.\n"
-                     "При превышении порога K «замораживается» — держится\n"
-                     "последнее валидное значение.",
+    "k_threshold":   "Порог дребезга для сглаживания K.\n"
+                     "K (сырой) = сумма ускорений / сглаженное ускорение —\n"
+                     "считается всегда, без сглаживания.\n"
+                     "K2 — это K, пропущенный через фильтр Калмана там,\n"
+                     "где дребезг ниже порога.\n"
+                     "На шумных участках K2 «замораживается» на последнем\n"
+                     "валидном значении.",
 
-    "k_q":           "Шум процесса Q фильтра Калмана для K.\n"
-                     "Больше — K быстрее реагирует на изменения, но шумнее.\n"
-                     "Меньше — K стабильнее, но инертнее.",
+    "k_q":           "Шум процесса Q фильтра Калмана для K2.\n"
+                     "Больше — K2 быстрее реагирует на изменения, но шумнее.\n"
+                     "Меньше — K2 стабильнее, но инертнее.",
 
-    "k_r":           "Шум измерения R фильтра Калмана для K.\n"
-                     "Больше — K более стабильный и плавный.\n"
-                     "Меньше — K сильнее следует за сырыми значениями.",
+    "k_r":           "Шум измерения R фильтра Калмана для K2.\n"
+                     "Больше — K2 более стабильный и плавный.\n"
+                     "Меньше — K2 сильнее следует за сырыми значениями K.",
+
+    "k2":            "K2 — сглаженный коэффициент K (Калман с гейтингом по дребезгу).\n"
+                     "Восстановленное ускорение = сумма / K2\n"
+                     "должно совпасть со сглаженным ускорением.",
 
     "toggle_panel":  "Скрыть панель управления (F9)",
 }
@@ -583,7 +590,7 @@ class SpeedAnalyzerApp:
 
         self.jitter_window_var = tk.DoubleVar(value=5.0)
 
-        # ---- Параметры коэффициента K ----
+        # ---- Параметры коэффициента K2 ----
         self.k_jitter_threshold_var = tk.DoubleVar(value=0.01)
         self.k_kalman_q_var         = tk.DoubleVar(value=0.01)
         self.k_kalman_r_var         = tk.DoubleVar(value=0.1)
@@ -622,7 +629,6 @@ class SpeedAnalyzerApp:
                                  anchor='w')
         self.lbl_path.pack(side=tk.LEFT, padx=14, fill='x', expand=True)
 
-        # ---- Кнопка-переключатель панели (самая правая) ----
         self.btn_toggle_panel = ttk.Button(top_card, text="▶",
                                            command=self.toggle_control_panel,
                                            style="Icon.TButton")
@@ -678,7 +684,7 @@ class SpeedAnalyzerApp:
         k_row = ttk.Frame(pipeline_frame, style="Card.TFrame")
         k_row.pack(fill='x', pady=(6, 0))
 
-        lbl_kt = ttk.Label(k_row, text="Коэф. K: считаем, если дребезг <",
+        lbl_kt = ttk.Label(k_row, text="K2: сглаживаем, если дребезг <",
                            style="Card.TLabel")
         lbl_kt.pack(side=tk.LEFT)
         ToolTip(lbl_kt, APP_TIPS["k_threshold"])
@@ -716,7 +722,6 @@ class SpeedAnalyzerApp:
         self.figure_frame = ttk.Frame(left_container, style="Card.TFrame")
         self.figure_frame.pack(fill=tk.BOTH, expand=True)
 
-        # ---- Панель управления (изначально видна) ----
         self.control_panel = ttk.Frame(self.main_split, style="Card.TFrame", width=360)
         self.control_panel.pack(side=tk.RIGHT, fill=tk.Y, padx=(12, 0))
         self.control_panel.pack_propagate(False)
@@ -731,14 +736,12 @@ class SpeedAnalyzerApp:
 
         self.create_control_panel()
 
-        # стартовое состояние — панель показана, кнопка «▶»
         self.btn_toggle_panel.config(text="▶")
         if self.tooltip_toggle_panel is not None:
             self.tooltip_toggle_panel.set_text("Скрыть панель управления (F9)")
 
     # ------------------------------------------------------------------
     def toggle_control_panel(self):
-        """Свернуть/развернуть правую панель управления."""
         if self.control_panel_visible:
             self.control_panel.pack_forget()
             self.control_panel_visible = False
@@ -1058,6 +1061,8 @@ class SpeedAnalyzerApp:
             group_accel.append(COL_SUM_ACCEL)
         if COL_K in df_cols:
             group_accel.append(COL_K)
+        if COL_K2 in df_cols:
+            group_accel.append(COL_K2)
         if COL_ACCEL_K in df_cols:
             group_accel.append(COL_ACCEL_K)
         if COL_JITTER in df_cols:
@@ -1088,7 +1093,8 @@ class SpeedAnalyzerApp:
 
         useful = ['Уклон', COL_SLOPE_FORCE, COL_SLOPE_ACCEL,
                   COL_TRACTION_ACCEL, COL_RESISTANCE_ACCEL,
-                  COL_RESISTANCE_FORCE, COL_SUM_ACCEL, COL_K, COL_ACCEL_K,
+                  COL_RESISTANCE_FORCE, COL_SUM_ACCEL,
+                  COL_K, COL_K2, COL_ACCEL_K,
                   TRACTION_NAME, COL_TRACTION_PCT,
                   'Тяга', 'Тормоз',
                   'ТЦ', 'ТМ', 'ГР', 'Скорость',
@@ -1262,7 +1268,7 @@ class SpeedAnalyzerApp:
                 COL_SLOPE_FORCE, COL_SLOPE_ACCEL,
                 COL_TRACTION_ACCEL, COL_TRACTION_PCT,
                 COL_RESISTANCE_FORCE, COL_RESISTANCE_ACCEL,
-                COL_SUM_ACCEL, COL_K, COL_ACCEL_K,
+                COL_SUM_ACCEL, COL_K, COL_K2, COL_ACCEL_K,
                 'Ускорение сглаженное',
             ]
             df = df.drop(columns=[c for c in drop_cols if c in df.columns])
@@ -1378,7 +1384,22 @@ class SpeedAnalyzerApp:
             df[COL_JITTER] = calculate_jitter(accel_final, time,
                                               half_window_sec=half_window)
 
+            # ---------- Коэффициент K (сырой) ----------
+            # K = сумма ускорений / сглаженное ускорение
+            # Без сглаживания. Только защита от деления на ≈0.
             if COL_SUM_ACCEL in df.columns:
+                sum_arr = df[COL_SUM_ACCEL].values.astype(float)
+                num     = np.asarray(accel_final, dtype=float)
+
+                with np.errstate(divide='ignore', invalid='ignore'):
+                    k_raw = sum_arr / num
+                k_raw = np.where(np.isfinite(k_raw), k_raw, np.nan)
+                k_raw = np.where(np.abs(num) > K_MIN_DENOM, k_raw, np.nan)
+
+                df[COL_K] = k_raw
+
+                # ---------- Коэффициент K2 (сглаженный) ----------
+                # Калман с гейтингом по дребезгу, применённый к K.
                 try:
                     k_thr = float(self.k_jitter_threshold_var.get())
                 except (tk.TclError, ValueError):
@@ -1392,29 +1413,23 @@ class SpeedAnalyzerApp:
                 except (tk.TclError, ValueError):
                     k_r = 0.1
 
-                num        = np.asarray(accel_final, dtype=float)
-                denom      = df[COL_SUM_ACCEL].values.astype(float)
                 jitter_arr = df[COL_JITTER].values.astype(float)
-
-                with np.errstate(divide='ignore', invalid='ignore'):
-                    k_raw = num / denom
-                k_raw = np.where(np.isfinite(k_raw), k_raw, np.nan)
 
                 valid_mask = (
                     np.isfinite(jitter_arr)
                     & (jitter_arr < k_thr)
-                    & np.isfinite(denom)
-                    & (np.abs(denom) > K_MIN_DENOM)
                     & np.isfinite(k_raw)
                 )
 
-                df[COL_K] = self._kalman_with_gating(k_raw, valid_mask,
-                                                     q=k_q, r=k_r)
+                df[COL_K2] = self._kalman_with_gating(k_raw, valid_mask,
+                                                      q=k_q, r=k_r)
 
-            if COL_K in df.columns:
-                df[COL_ACCEL_K] = (
-                    np.asarray(accel_final, dtype=float)
-                    * df[COL_K].values.astype(float)
+                # ---------- Восстановленное ускорение = сумма / K2 ----------
+                k2_arr = df[COL_K2].values.astype(float)
+                with np.errstate(divide='ignore', invalid='ignore'):
+                    accel_restored = sum_arr / k2_arr
+                df[COL_ACCEL_K] = np.where(
+                    np.isfinite(accel_restored), accel_restored, np.nan
                 )
 
             top_default = (COL_V_SMOOTH if self.stage_speed.enabled.get()
