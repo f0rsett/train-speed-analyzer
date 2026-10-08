@@ -32,6 +32,7 @@ def calculate_acceleration(speed, time, step=10):
                 acceleration[i] = (speed[i] - speed[i - step]) / dt
     return acceleration
 
+
 def calculate_jitter(signal, time, half_window_sec=5.0):
     """Локальный размах: max(signal) - min(signal) в окне ±half_window_sec.
 
@@ -42,7 +43,6 @@ def calculate_jitter(signal, time, half_window_sec=5.0):
     n = len(signal)
     result = np.full(n, np.nan)
     for i in range(n):
-        # Нет значения в самой точке — нет и дребезга
         if not np.isfinite(signal[i]):
             continue
         t = time[i]

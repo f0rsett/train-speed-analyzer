@@ -265,12 +265,85 @@ class PlotManager:
                                 'Коэффициент K2', 'Ускорение с учётом K') else 1.5
             ax.plot(time, y_plot, label=label, color=color, linewidth=lw, zorder=z)
 
+    @staticmethod
+    def _autoscale_y_in_xrange(ax, xlim):
+        """Подбирает ylim так, чтобы в диапазоне xlim были видны все данные."""
+        x1, x2 = xlim
+        if not np.isfinite(x1) or not np.isfinite(x2) or x2 <= x1:
+            return
+
+        y_min = np.inf
+        y_max = -np.inf
+
+        # --- линии ---
+        for line in ax.lines:
+            xdata = np.asarray(line.get_xdata(), dtype=float)
+            ydata = np.asarray(line.get_ydata(), dtype=float)
+            if len(xdata) == 0 or len(xdata) != len(ydata):
+                continue
+            mask = (xdata >= x1) & (xdata <= x2)
+            if not mask.any():
+                continue
+            ys = ydata[mask]
+            finite = ys[np.isfinite(ys)]
+            if len(finite) > 0:
+                y_min = min(y_min, float(np.nanmin(finite)))
+                y_max = max(y_max, float(np.nanmax(finite)))
+
+        # --- бары (Тяга/Тормоз) ---
+        for patch in ax.patches:
+            try:
+                x0 = patch.get_x()
+                w = patch.get_width()
+                x_lo = min(x0, x0 + w)
+                x_hi = max(x0, x0 + w)
+                # пересечение с [x1, x2]?
+                if x_hi < x1 or x_lo > x2:
+                    continue
+                y0 = patch.get_y()
+                h = patch.get_height()
+                y_lo = min(y0, y0 + h)
+                y_hi = max(y0, y0 + h)
+                if np.isfinite(y_lo):
+                    y_min = min(y_min, y_lo)
+                if np.isfinite(y_hi):
+                    y_max = max(y_max, y_hi)
+            except Exception:
+                pass
+
+        # --- fill_between (коридоры) ---
+        for collection in ax.collections:
+            if isinstance(collection, plt.matplotlib.collections.PolyCollection):
+                for path in collection.get_paths():
+                    verts = path.vertices
+                    if len(verts) == 0:
+                        continue
+                    mask = (verts[:, 0] >= x1) & (verts[:, 0] <= x2)
+                    if not mask.any():
+                        continue
+                    y_vals = verts[mask, 1]
+                    finite = y_vals[np.isfinite(y_vals)]
+                    if len(finite) > 0:
+                        y_min = min(y_min, float(np.nanmin(finite)))
+                        y_max = max(y_max, float(np.nanmax(finite)))
+
+        if np.isfinite(y_min) and np.isfinite(y_max):
+            y_range = y_max - y_min
+            if y_range > 0:
+                ax.set_ylim(y_min - y_range * 0.1, y_max + y_range * 0.1)
+            else:
+                # все значения одинаковые — сделаем минимальный запас
+                pad = max(abs(y_min) * 0.01, 1e-6)
+                ax.set_ylim(y_min - pad, y_max + pad)
+
     def show_plots(self, preserve_view=True):
         if self.df is None or self.time_col is None:
             return
         if not self.top_columns and not self.bottom_columns:
             return
 
+        # ---- снимаем текущий вид ДО перерисовки ----
+        # Сохраняем ТОЛЬКО x-диапазоны. Y будет пересчитан под новые данные.
         saved_view = None
         if (preserve_view
                 and self.ax1 is not None
@@ -278,9 +351,8 @@ class PlotManager:
                 and self.canvas is not None):
             try:
                 saved_view = {
-                    'xlim':  tuple(self.ax1.get_xlim()),
-                    'ylim1': tuple(self.ax1.get_ylim()),
-                    'ylim2': tuple(self.ax2.get_ylim()),
+                    'xlim1': tuple(self.ax1.get_xlim()),
+                    'xlim2': tuple(self.ax2.get_xlim()),
                 }
             except Exception:
                 saved_view = None
@@ -342,55 +414,9 @@ class PlotManager:
         ax2.grid(True, alpha=0.3)
         ax2.set_xlim(time.min(), time.max())
 
+        # ---- авто-масштаб Y по всем данным (базовый) ----
         for ax in (ax1, ax2):
-            y_min = np.inf
-            y_max = -np.inf
-
-            for line in ax.lines:
-                ydata = line.get_ydata()
-                if len(ydata) > 0:
-                    finite = ydata[np.isfinite(ydata)]
-                    if len(finite) > 0:
-                        y_min = min(y_min, np.nanmin(finite))
-                        y_max = max(y_max, np.nanmax(finite))
-
-            for patch in ax.patches:
-                try:
-                    y0 = patch.get_y()
-                    h = patch.get_height()
-                    y_lo = min(y0, y0 + h)
-                    y_hi = max(y0, y0 + h)
-                    if np.isfinite(y_lo):
-                        y_min = min(y_min, y_lo)
-                    if np.isfinite(y_hi):
-                        y_max = max(y_max, y_hi)
-                except Exception:
-                    pass
-
-            for collection in ax.collections:
-                if isinstance(collection, plt.matplotlib.collections.PolyCollection):
-                    for path in collection.get_paths():
-                        verts = path.vertices
-                        if len(verts) > 0:
-                            y_vals = verts[:, 1]
-                            finite = y_vals[np.isfinite(y_vals)]
-                            if len(finite) > 0:
-                                y_min = min(y_min, np.nanmin(finite))
-                                y_max = max(y_max, np.nanmax(finite))
-
-            if np.isfinite(y_min) and np.isfinite(y_max):
-                y_range = y_max - y_min
-                if y_range > 0:
-                    ax.set_ylim(y_min - y_range * 0.1, y_max + y_range * 0.1)
-
-        if saved_view is not None:
-            try:
-                ax1.set_xlim(saved_view['xlim'])
-                ax2.set_xlim(saved_view['xlim'])
-                ax1.set_ylim(saved_view['ylim1'])
-                ax2.set_ylim(saved_view['ylim2'])
-            except Exception:
-                pass
+            self._autoscale_y_in_xrange(ax, (float(time.min()), float(time.max())))
 
         plt.tight_layout()
 
@@ -414,6 +440,19 @@ class PlotManager:
             toolbar.update()
 
         canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+        # ---- восстанавливаем X и подстраиваем Y под данные в этом X ----
+        if saved_view is not None:
+            try:
+                ax1.set_xlim(saved_view['xlim1'])
+                ax2.set_xlim(saved_view['xlim2'])
+                self._autoscale_y_in_xrange(ax1, saved_view['xlim1'])
+                self._autoscale_y_in_xrange(ax2, saved_view['xlim2'])
+                ax1.set_autoscale_on(False)
+                ax2.set_autoscale_on(False)
+                canvas.draw_idle()
+            except Exception:
+                pass
 
     def _add_interactivity(self, canvas, ax1, ax2):
         self.vline1 = ax1.axvline(x=0, color='#FF6B6B', linestyle='--',

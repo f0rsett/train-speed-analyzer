@@ -10,9 +10,6 @@ from processing import SpeedProcessor
 from plotting import PlotManager
 from utils import find_columns, calculate_acceleration, calculate_jitter
 
-if sys.platform == 'win32':
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
-
 BG         = "#f4f6f9"
 PANEL_BG   = "#ffffff"
 FG         = "#2c3e50"
@@ -1385,8 +1382,6 @@ class SpeedAnalyzerApp:
                                               half_window_sec=half_window)
 
             # ---------- Коэффициент K (сырой) ----------
-            # K = сумма ускорений / сглаженное ускорение
-            # Без сглаживания. Только защита от деления на ≈0.
             if COL_SUM_ACCEL in df.columns:
                 sum_arr = df[COL_SUM_ACCEL].values.astype(float)
                 num     = np.asarray(accel_final, dtype=float)
@@ -1399,7 +1394,6 @@ class SpeedAnalyzerApp:
                 df[COL_K] = k_raw
 
                 # ---------- Коэффициент K2 (сглаженный) ----------
-                # Калман с гейтингом по дребезгу, применённый к K.
                 try:
                     k_thr = float(self.k_jitter_threshold_var.get())
                 except (tk.TclError, ValueError):
